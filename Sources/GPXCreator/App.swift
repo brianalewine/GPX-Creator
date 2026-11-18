@@ -23,7 +23,7 @@ struct ContentView: View {
         HStack(spacing:0) {
             VStack(spacing:20) {
                 Image(systemName:"point.topleft.down.to.point.bottomright.curvepath").font(.system(size:24,weight:.bold)).foregroundStyle(.orange).padding(.top,30)
-                nav("GPX Creator",icon:"point.3.connected.trianglepath.dotted",tab:0)
+                nav("GPX Creator",icon:"point.3.filled.connected.trianglepath.dotted",tab:0)
                 nav("Path Dashboard",icon:"map",tab:1)
                 Spacer()
                 Button { model.settings=true } label: { Image(systemName:"gearshape").font(.system(size:21)).frame(width:50,height:45) }.buttonStyle(.plain).help("Settings").padding(.bottom,16)
