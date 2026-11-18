@@ -1,7 +1,16 @@
 import SwiftUI
 import AVKit
 
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        if let url = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"), let icon = NSImage(contentsOf: url) {
+            NSApplication.shared.applicationIconImage = icon
+        }
+    }
+}
+
 @main struct GPXCreatorApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var model=AppModel()
     var body: some Scene { WindowGroup { ContentView(model:model).preferredColorScheme(.light).frame(minWidth:1000,minHeight:720) }.windowStyle(.hiddenTitleBar).commands { CommandGroup(replacing:.appSettings) { Button("Settings…") { model.settings=true }.keyboardShortcut(",") } } }
 }
