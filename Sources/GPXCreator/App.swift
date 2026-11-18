@@ -69,7 +69,20 @@ struct ContentView: View {
         }.background(Color(red:0.985,green:0.987,blue:0.99))
     }
     var video: some View { VStack(spacing:0) {
-        ZStack { Color(red:0.10,green:0.12,blue:0.15);if model.videoURL != nil { VideoPlayer(player:model.player) } else { VStack(spacing:12) { Image(systemName:"video").font(.system(size:36));Text("Bring your journey into view").font(.headline);Button("Open equirectangular video") {model.choose(dashboard:false,video:true)} }.foregroundStyle(.white.opacity(0.85)) } }
+        ZStack {
+            if model.videoURL != nil {
+                Color.black
+                VideoPlayer(player:model.player)
+            } else {
+                Color(red:0.97,green:0.975,blue:0.985)
+                VStack(spacing:12) {
+                    Image(systemName:"video").font(.system(size:36)).foregroundStyle(.secondary)
+                    Text("Bring your journey into view").font(.headline).foregroundStyle(.primary)
+                    Button("Open equirectangular video") {model.choose(dashboard:false,video:true)}
+                        .buttonStyle(.borderedProminent).tint(.orange)
+                }
+            }
+        }
         HStack(spacing:12) { Button { if model.player.rate==0 { model.player.play() } else { model.player.pause() } } label: { Image(systemName:model.player.rate==0 ? "play.fill" : "pause.fill") }.buttonStyle(.plain);Text(clock(model.time)).monospacedDigit().font(.caption);TimelineView(model:model);Text(clock(model.duration)).monospacedDigit().font(.caption) }.padding(12).background(Color.white)
     } }
     var creatorControls: some View { VStack(alignment:.leading,spacing:18) {
