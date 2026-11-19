@@ -1,30 +1,345 @@
-<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"><style>html,body,#map{height:100%;margin:0;font-family:-apple-system,sans-serif}#notice{position:absolute;bottom:28px;left:12px;background:white;padding:10px 14px;border-radius:8px;z-index:1000;box-shadow:0 2px 12px #0002;display:none}.pin{border:2px solid #e58b22;border-radius:50%;background:white;width:12px;height:12px}.start{background:#32b66b}.auto{width:5px;height:5px;background:#89939d;border:1px solid white}.finish{font-size:22px;background:white;border-radius:6px}</style><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script></head><body><div id="map"></div><div id="notice"></div><script>
-let dashboardLines={},renderSignature='';
-let map,provider='',layers=[],state={},coverageLayer,loadedKey='',googlePromise,fit='',cursor;
+<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"><style>html,body,#map{height:100%;margin:0;font-family:-apple-system,sans-serif}#map{position:relative}#notice{position:absolute;bottom:28px;left:12px;background:white;padding:10px 14px;border-radius:8px;z-index:1000;box-shadow:0 2px 12px #0002;display:none}#coord-editor{position:absolute;z-index:2000;width:300px;box-sizing:border-box;background:white;border:1px solid #d9dee5;border-radius:10px;padding:12px;box-shadow:0 4px 18px #0003}#coord-editor label{display:block;font-size:12px;font-weight:600;margin-bottom:7px}#coord-editor input{box-sizing:border-box;width:100%;padding:8px 9px;border:1px solid #c8cdd3;border-radius:6px;font:13px -apple-system,sans-serif;outline:none}#coord-editor input:focus{border-color:#2878d7;box-shadow:0 0 0 2px #2878d733}#coord-editor .editor-actions{display:flex;justify-content:flex-end;gap:7px;margin-top:9px}#coord-editor button{border:0;border-radius:6px;padding:7px 10px;font:12px -apple-system,sans-serif;cursor:pointer}#coord-editor button[type=submit]{background:#2878d7;color:white}#coord-editor button[type=button]{background:#eef1f4;color:#20242a}#coord-editor .editor-error{color:#b42318;font-size:11px;margin-top:5px;display:none}.point-hit{width:16px;height:16px;display:flex;align-items:center;justify-content:center}.pin{box-sizing:border-box;border:3px solid #2878d7;border-radius:50%;background:white;width:16px;height:16px}.start{background:#32b66b}.auto{width:4px;height:4px;background:#89939d}.endpoint{width:16px;height:16px;display:block;filter:drop-shadow(0 1px 2px #0004)}.preview-dot{width:12px;height:12px;box-sizing:border-box;border-radius:50%;background:#63b4ff;border:1.5px solid white;box-shadow:0 1px 3px #0005}gmp-map-3d{display:block;width:100%;height:100%}</style><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script></head><body><div id="map"></div><div id="notice"></div><script>
+const PreciseMap=L.Map.extend({
+ _getNewPixelOrigin:function(center,zoom){return this.project(center,zoom).subtract(this.getSize().divideBy(2)).add(this._getMapPanePos());},
+ latLngToLayerPoint:function(latlng){return this.project(L.latLng(latlng)).subtract(this.getPixelOrigin());}
+});
+const RetainedTiles=L.TileLayer.extend({
+ initialize:function(url,options){L.TileLayer.prototype.initialize.call(this,url,options);this.decoded=new Map();},
+ _setZoomTransform:function(level,center,zoom){
+  const scale=this._map.getZoomScale(zoom,level.zoom);
+  const translate=level.origin.multiplyBy(scale).subtract(this._map._getNewPixelOrigin(center,zoom));
+  L.DomUtil.setTransform(level.el,translate,scale);
+ },
+ getEvents:function(){const events=L.TileLayer.prototype.getEvents.call(this);delete events.viewprereset;return events;},
+ createTile:function(coords,done){
+  const key=this._tileCoordsToKey(coords),cached=this.decoded.get(key);
+  if(cached){this.decoded.delete(key);cached.className='';cached.style.cssText='';delete cached.dataset.failed;setTimeout(()=>done(null,cached),0);return cached;}
+  return L.TileLayer.prototype.createTile.call(this,coords,done);
+ },
+ _removeTile:function(key){
+  const record=this._tiles[key];
+  if(record&&record.el.complete&&record.el.naturalWidth&&!record.el.dataset.failed){
+   L.DomEvent.off(record.el);this.decoded.set(key,record.el);
+   while(this.decoded.size>128)this.decoded.delete(this.decoded.keys().next().value);
+   L.GridLayer.prototype._removeTile.call(this,key);
+  }else L.TileLayer.prototype._removeTile.call(this,key);
+ }
+});
+
+const LiveTrackRenderer=L.SVG.extend({_onZoom:function(){this._reset();}});
+let dashboardLines={},renderSignature='',creatorLine=null,creatorHitLine=null,draggingID=null,pendingState=null;
+let map,provider='',layers=[],state={},coverageLayer,loadedKey='',googlePromise,google3DLibrary,fit='',cursor,cursorFrame=0,cursorPending=null,coordEditor=null;
 const send=(type,data={})=>window.webkit.messageHandlers.bridge.postMessage({type,...data});
+const interactionStyle=document.createElement('style');interactionStyle.textContent='.leaflet-interactive{cursor:pointer!important}.preview-dot{display:block;background:#168bff!important;opacity:1!important}';document.head.append(interactionStyle);
+let cursorResetTimer=0;function setMapPathCursor(inside){if(provider!=='google'||!map)return;clearTimeout(cursorResetTimer);if(inside)map.getDiv().style.cursor='pointer';else cursorResetTimer=setTimeout(()=>{if(provider==='google'&&map)map.getDiv().style.cursor=''},100)}
 function notice(s){let n=document.getElementById('notice');n.textContent=s;n.style.display=s?'block':'none'}
+function savedCamera(s){const c=s.camera;if(c&&Number.isFinite(c.lat)&&Number.isFinite(c.lng)&&Number.isFinite(c.zoom))return c;return {lat:40.73,lng:-73.98,zoom:12}}
 window.gm_authFailure=()=>notice('Google Maps could not authenticate this key. Check its API access and restrictions.');
 function googleLoad(key){if(window.google?.maps)return Promise.resolve();if(googlePromise)return googlePromise;googlePromise=new Promise((resolve,reject)=>{window.initGoogle=resolve;let s=document.createElement('script');s.src='https://maps.googleapis.com/maps/api/js?key='+encodeURIComponent(key)+'&callback=initGoogle&libraries=streetView&v=weekly';s.onerror=reject;document.head.append(s)});return googlePromise}
-async function setup(s){let wanted=s.google?'google':'osm';if(provider===wanted&&map)return;provider=wanted;layers=[];cursor=null;document.getElementById('map').innerHTML='';if(map?.remove)map.remove();map=null;
- if(wanted==='google'){if(!s.key){notice('Add your Google Maps demo key in Settings.');return}try{await googleLoad(s.key);map=new google.maps.Map(document.getElementById('map'),{center:{lat:40.73,lng:-73.98},zoom:12,disableDoubleClickZoom:true,mapTypeControl:false,streetViewControl:true,fullscreenControl:false});coverageLayer=new google.maps.StreetViewCoverageLayer();map.addListener('click',e=>click(e.latLng.lat(),e.latLng.lng(),false));map.addListener('dblclick',e=>click(e.latLng.lat(),e.latLng.lng(),true));notice('')}catch(e){notice('Google Maps could not load. Check your connection and API key.')}}
- else {map=L.map('map',{doubleClickZoom:false}).setView([40.73,-73.98],12);L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap contributors',maxZoom:19}).addTo(map);map.on('click',e=>click(e.latlng.lat,e.latlng.lng,false));map.on('dblclick',e=>click(e.latlng.lat,e.latlng.lng,true));notice('')}
- fit='';}
-let clickTimer;function click(lat,lng,finish){if(state.dashboard){send('select',{id:''});return}clearTimeout(clickTimer);if(finish)send('add',{lat,lng,finish:true});else clickTimer=setTimeout(()=>send('add',{lat,lng,finish:false}),230)}
-function remove(l){provider==='google'?l.setMap(null):map.removeLayer(l)}
-function line(points,color,width){let coords=points.map(p=>({lat:p.lat,lng:p.lng}));let l=provider==='google'?new google.maps.Polyline({map,path:coords,strokeColor:color,strokeWeight:width,strokeOpacity:1}):L.polyline(points.map(p=>[p.lat,p.lng]),{color,weight:width}).addTo(map);layers.push(l);return l}
-function event(l,name,fn){if(provider==='google')l.addListener(name,fn);else l.on(name,fn)}
-function coord(e){return provider==='google'?{lat:e.latLng.lat(),lng:e.latLng.lng()}:{lat:e.latlng.lat,lng:e.latlng.lng}}
+function rangeForZoom(lat,zoom){return 40075016.686*Math.max(.05,Math.cos(lat*Math.PI/180))*((document.getElementById('map').clientHeight||600)/256)/(2*Math.tan(Math.PI/8))/2**zoom}
+function zoomForRange(lat,range){const base=40075016.686*Math.max(.05,Math.cos(lat*Math.PI/180))*((document.getElementById('map').clientHeight||600)/256)/(2*Math.tan(Math.PI/8));return Math.max(2,Math.min(24,Math.log2(base/Math.max(1,range))))}
+function currentCamera(){if(!map)return null;if(provider==='google'){const c=map.getCenter();return c?{lat:c.lat(),lng:c.lng(),zoom:map.getZoom()}:null}if(provider==='osm'||provider==='esri'){const c=map.getCenter();return c?{lat:c.lat,lng:c.lng,zoom:map.getZoom()}:null}if(provider==='google3d'){map.tilt=0;map.heading=0;const c=map.center;return c?{lat:c.lat,lng:c.lng,zoom:zoomForRange(c.lat,map.range)}:null}return null}
+function applyCamera(camera){if(!map||!camera)return;if(provider==='google')map.moveCamera({center:{lat:camera.lat,lng:camera.lng},zoom:camera.zoom});else if(provider==='google3d'){map.center={lat:camera.lat,lng:camera.lng,altitude:0};map.range=rangeForZoom(camera.lat,camera.zoom);map.tilt=0;map.heading=0}else if(provider==='osm'||provider==='esri')map.setView([camera.lat,camera.lng],camera.zoom,{animate:false})}
+async function setup(s){let wanted=s.google?(s.google3D?'google3d':'google'):s.osmSatellite?'esri':'osm';if(provider===wanted&&map)return;if(coverageLayer)coverageLayer.setMap(null);provider=wanted;layers=[];cursor=null;coordEditor=null;document.getElementById('map').innerHTML='';if(map?.remove)map.remove();map=null;
+ const camera=savedCamera(s);
+ if(wanted==='google3d'){if(!s.key){notice('Add your Google Maps demo key in Settings.');return}try{await googleLoad(s.key);google3DLibrary=await google.maps.importLibrary('maps3d');map=new google3DLibrary.Map3DElement({center:{lat:camera.lat,lng:camera.lng,altitude:0},range:rangeForZoom(camera.lat,camera.zoom),tilt:0,heading:0,mode:'HYBRID',gestureHandling:'greedy',defaultUIHidden:false});document.getElementById('map').append(map);installGoogle3DGestures(map);let cameraSaveTimer;const saveCamera=()=>{clearTimeout(cameraSaveTimer);cameraSaveTimer=setTimeout(()=>{const c=map?.center;if(c)send('camera',{lat:c.lat,lng:c.lng,zoom:zoomForRange(c.lat,map.range),google:true})},250)};map.addEventListener('gmp-centerchange',saveCamera);map.addEventListener('gmp-rangechange',saveCamera);map.addEventListener('gmp-click',e=>{if(e.position)click(e.position.lat,e.position.lng,false)});map.addEventListener('gmp-pointermove',e=>{if(draggingID&&e.position){const position={lat:e.position.lat,lng:e.position.lng};const record=pointMarkers.find(r=>r.point.id===draggingID);if(record)record.marker.position={...position,altitude:0};updateDraggedPath(draggingID,position)}});map.addEventListener('gmp-error',()=>notice('Google Maps 3D could not load for this API key or device.'));notice('')}catch(e){notice('Google Maps 3D could not load. Check your API key and connection.')}return}
+ if(wanted==='google'){if(!s.key){notice('Add your Google Maps demo key in Settings.');return}try{await googleLoad(s.key);map=new google.maps.Map(document.getElementById('map'),{center:{lat:camera.lat,lng:camera.lng},zoom:camera.zoom,mapTypeId:!s.dashboard&&s.googleSatellite?'satellite':'roadmap',tilt:0,heading:0,maxZoom:24,renderingType:'RASTER',gestureHandling:'greedy',disableDoubleClickZoom:true,mapTypeControl:!s.dashboard,mapTypeControlOptions:{mapTypeIds:['roadmap','satellite'],style:google.maps.MapTypeControlStyle.DROPDOWN_MENU},rotateControl:false,tiltInteractionEnabled:false,headingInteractionEnabled:false,streetViewControl:true,fullscreenControl:false});installGooglePinch(map);coverageLayer=new google.maps.StreetViewCoverageLayer();map.addListener('click',e=>click(e.latLng.lat(),e.latLng.lng()));map.addListener('idle',()=>{const c=map.getCenter();if(c)send('camera',{lat:c.lat(),lng:c.lng(),zoom:map.getZoom(),google:true})});map.addListener('maptypeid_changed',()=>{if(!s.dashboard)send('mapType',{satellite:map.getMapTypeId()==='satellite'})});map.addListener('zoom_changed',scheduleMapStyle);map.addListener('projection_changed',scheduleMapStyle);notice('')}catch(e){notice('Google Maps could not load. Check your connection and API key.')}}
+ else {map=new PreciseMap('map',{touchZoom:false,fadeAnimation:false,doubleClickZoom:false,maxZoom:24,zoomSnap:0,zoomDelta:0.25,scrollWheelZoom:false,zoomAnimation:true}).setView([camera.lat,camera.lng],camera.zoom);if(wanted==='esri'){const tile={maxNativeZoom:23,maxZoom:24};new RetainedTiles('https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{...tile,attribution:'Source: Esri, Vantor, Earthstar Geographics, and the GIS User Community'}).addTo(map);new RetainedTiles('https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}',{...tile,attribution:'Sources: Esri, HERE, Garmin, © OpenStreetMap contributors, and the GIS community'}).addTo(map);new RetainedTiles('https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',{...tile,attribution:'Sources: Esri, Garmin, HERE, © OpenStreetMap contributors, and the GIS user community'}).addTo(map)}else new RetainedTiles('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap contributors',maxNativeZoom:19,maxZoom:24}).addTo(map);map.getContainer().addEventListener('contextmenu',e=>e.preventDefault());map.on('click',e=>click(e.latlng.lat,e.latlng.lng));map.on('moveend',()=>{const c=map.getCenter();send('camera',{lat:c.lat,lng:c.lng,zoom:map.getZoom(),google:false})});installSmoothWheel(map);map.on('zoom move zoomend moveend',scheduleMapStyle);notice('')}
+}
+let clickTimer,lineClickTimer,lineLastClick=0;function click(lat,lng){if(state.dashboard){send('select',{id:''});return}clearTimeout(clickTimer);clickTimer=setTimeout(()=>send('add',{lat,lng}),230)}
+function remove(l){if(provider==='google')l.setMap(null);else if(provider==='google3d')l.remove();else map.removeLayer(l)}
+function line(points,color,width){let coords=points.map(p=>({lat:p.lat,lng:p.lng}));let l=provider==='google'?new google.maps.Polyline({map,path:coords,strokeColor:color,strokeWeight:width,strokeOpacity:1}):provider==='google3d'?new google3DLibrary.Polyline3DInteractiveElement({path:coords,strokeColor:color,strokeWidth:Math.max(5,width*1.7),outerColor:'#ffffff',outerWidth:0.35,altitudeMode:'CLAMP_TO_GROUND',drawsOccludedSegments:true}):L.polyline(points.map(p=>[p.lat,p.lng]),{renderer:new LiveTrackRenderer(),color,weight:width,lineCap:'round'}).addTo(map);if(provider==='google3d'){l.style.cursor='pointer';map.append(l)}layers.push(l);return l}
+function lineHitArea(points,width,multiplier=9){if(provider==='google3d')return null;const coords=points.map(p=>({lat:p.lat,lng:p.lng}));let hit=provider==='google'?new google.maps.Polyline({map,path:coords,strokeColor:routeBlue,strokeWeight:width*multiplier,strokeOpacity:0.01,zIndex:1000}):L.polyline(points.map(p=>[p.lat,p.lng]),{renderer:new LiveTrackRenderer(),color:routeBlue,weight:width*multiplier,opacity:0.01,interactive:true,bubblingMouseEvents:false,lineCap:'round'}).addTo(map);layers.push(hit);return hit}
+function event(l,name,fn){if(provider==='google')l.addListener(name,fn);else if(provider==='google3d'){const eventName={click:'gmp-click',mousemove:'gmp-pointermove',mouseout:'gmp-pointerout',mouseover:'gmp-pointerover'}[name];if(eventName)l.addEventListener(eventName,e=>{const p=e.position;fn(p?{position:p,latLng:{lat:()=>p.lat,lng:()=>p.lng}}:e)})}else l.on(name,fn)}
+function coord(e){return provider==='google'?{lat:e.latLng.lat(),lng:e.latLng.lng()}:provider==='google3d'?{lat:e.position.lat,lng:e.position.lng}:{lat:e.latlng.lat,lng:e.latlng.lng}}
 function nearest(points,c){let best=null,d=Infinity;for(let i=1;i<points.length;i++){let a=points[i-1],b=points[i],dx=b.lng-a.lng,dy=b.lat-a.lat;let f=Math.max(0,Math.min(1,((c.lng-a.lng)*dx+(c.lat-a.lat)*dy)/(dx*dx+dy*dy||1)));let x=a.lng+f*dx,y=a.lat+f*dy,dist=(c.lng-x)**2+(c.lat-y)**2;if(dist<d){d=dist;best={lat:y,lng:x,time:a.time+f*(b.time-a.time)}}}return best}
-function marker(p,index,total){let finish=state.finished&&index===total-1;let color=index===0?'#31b86a':p.manual?'white':'#89939d';let m;
-if(provider==='google'){m=new google.maps.Marker({map,position:{lat:p.lat,lng:p.lng},draggable:p.manual,icon:{path:google.maps.SymbolPath.CIRCLE,scale:p.manual?7:3,fillColor:color,fillOpacity:1,strokeColor:p.manual?'#e78b24':'white',strokeWeight:2},label:finish?{text:'🏁',color:'#111',fontSize:'22px'}:undefined});event(m,'dragend',e=>send('move',{id:p.id,...coord(e)}));event(m,'rightclick',()=>send('delete',{id:p.id}));}
-else{m=L.marker([p.lat,p.lng],{draggable:p.manual,icon:L.divIcon({className:'',html:finish?'<div class="finish">🏁</div>':'<div class="pin '+(index===0?'start':p.manual?'':'auto')+'"></div>',iconSize:[16,16],iconAnchor:[8,8]})}).addTo(map);event(m,'dragend',()=>send('move',{id:p.id,lat:m.getLatLng().lat,lng:m.getLatLng().lng}));event(m,'contextmenu',e=>{L.DomEvent.stopPropagation(e);send('delete',{id:p.id})})}
-event(m,'click',()=>{clearTimeout(clickTimer);send(finish?'unfinish':'seek',{time:p.time})});layers.push(m)}
-window.update=async function(s){state=s;await setup(s);if(!map)return;let signature=JSON.stringify([s.google,s.key,s.dashboard,s.points,s.tracks,s.finished]);if(s.dashboard&&signature===renderSignature&&s.fit===fit){Object.entries(dashboardLines).forEach(([id,l])=>{let color=id===s.selected||id===s.hovered?'#f28b22':'#153c78';provider==='google'?l.setOptions({strokeColor:color}):l.setStyle({color})});if(coverageLayer)coverageLayer.setMap(s.coverage&&s.google?map:null);return}renderSignature=signature;dashboardLines={};layers.forEach(remove);layers=[];if(coverageLayer)coverageLayer.setMap(s.coverage&&s.google?map:null);
-let all=[];if(s.dashboard){for(let t of s.tracks){all.push(...t.points);let l=line(t.points,t.id===s.selected||t.id===s.hovered?'#f28b22':'#153c78',5);dashboardLines[t.id]=l;event(l,'mouseover',()=>send('hover',{id:t.id}));event(l,'mouseout',()=>send('hover',{id:''}));event(l,'click',()=>send('select',{id:t.id}))}}
-else{all=s.points;if(all.length>1){let l=line(all,'#ed8c25',4);event(l,'mousemove',e=>{let p=nearest(all,coord(e));if(p)send('preview',p)});event(l,'mouseout',()=>send('previewEnd'));event(l,'click',e=>{clearTimeout(clickTimer);let p=nearest(all,coord(e));if(p)send('insert',p)});event(l,'dblclick',e=>{clearTimeout(clickTimer);let p=nearest(all,coord(e));if(p)send('insert',{...p,finish:true})})}all.forEach((p,i)=>marker(p,i,all.length));}
-if(s.fit&&fit!==s.fit&&all.length){fit=s.fit;let target=s.dashboard?(s.tracks.find(t=>t.id===s.fit)?.points||all):all;if(provider==='google'){let b=new google.maps.LatLngBounds();target.forEach(p=>b.extend({lat:p.lat,lng:p.lng}));let span=b.toSpan();let c=b.getCenter();b=new google.maps.LatLngBounds({lat:c.lat()-span.lat()*.7,lng:c.lng()-span.lng()*.7},{lat:c.lat()+span.lat()*.7,lng:c.lng()+span.lng()*.7});map.fitBounds(b,30)}else map.fitBounds(L.latLngBounds(target.map(p=>[p.lat,p.lng])).pad(.2),{maxZoom:18})}
-window.cursorAt(s.cursor);};
-window.cursorAt=function(p){if(cursor){remove(cursor);cursor=null}if(!p||!map)return;cursor=provider==='google'?new google.maps.Marker({map,position:p,icon:{path:google.maps.SymbolPath.CIRCLE,scale:9,fillColor:'#2389ee',fillOpacity:1,strokeColor:'white',strokeWeight:3},zIndex:999}):L.circleMarker([p.lat,p.lng],{radius:8,color:'white',weight:3,fillColor:'#2389ee',fillOpacity:1}).addTo(map)};
-new ResizeObserver(()=>{if(!map)return;if(provider==='osm')map.invalidateSize();else google.maps.event.trigger(map,'resize')}).observe(document.getElementById('map'));
+let pathHover=false;
+function endPathPreview(){pathHover=false;setMapPathCursor(false);window.cursorAt(null);send('previewEnd')}
+function previewAtMapEvent(e){
+    if(provider!=='google3d')return; // 2D uses the actual pointer, never marker-center coordinates.
+    try{const p=nearest(state.points||[],coord(e));if(p){pathHover=true;window.cursorAt(p);send('preview',p)}}catch(_){}
+}
+function previewPointer(e){
+    if(state.dashboard||draggingID||!map)return;
+    let c,project;
+    if(provider==='osm'||provider==='esri'){
+        c=map.mouseEventToLatLng(e);
+        project=p=>map.latLngToContainerPoint([p.lat,p.lng]);
+    }else if(provider==='google'){
+        const projection=map.getProjection(),center=map.getCenter();if(!projection||!center)return;
+        const rect=map.getDiv().getBoundingClientRect(),scale=2**map.getZoom(),world=projection.fromLatLngToPoint(center);
+        const ll=projection.fromPointToLatLng(new google.maps.Point(world.x+(e.clientX-rect.left-rect.width/2)/scale,world.y+(e.clientY-rect.top-rect.height/2)/scale));
+        c={lat:ll.lat(),lng:ll.lng()};
+        project=p=>{const q=projection.fromLatLngToPoint(new google.maps.LatLng(p.lat,p.lng));return {x:q.x*scale,y:q.y*scale}};
+    }else return;
+    const p=nearest(state.points||[],c),a=project(c),b=p&&project(p);
+    if(!p||Math.hypot(a.x-b.x,a.y-b.y)>routeWidth()*9/2){if(pathHover)endPathPreview();return}
+    pathHover=true;setMapPathCursor(true);window.cursorAt(p);send('preview',p);
+}
+document.getElementById('map').addEventListener('mousemove',previewPointer,{capture:true});
+document.getElementById('map').addEventListener('mouseleave',endPathPreview);
+
+const startSVG = '<svg class="endpoint" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 32 32"><circle cx="16" cy="16" r="13" fill="#19a35f" stroke="white" stroke-width="3"/></svg>';
+const manualSVG = '<svg class="endpoint" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 32 32"><circle cx="16" cy="16" r="13" fill="white" stroke="#2878d7" stroke-width="3"/></svg>';
+const finishSVG = '<svg class="endpoint" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 32 32"><defs><clipPath id="c"><circle cx="16" cy="16" r="10"/></clipPath></defs><circle cx="16" cy="16" r="14.5" fill="white"/><g clip-path="url(#c)"><path d="M6 6h20v20H6z" fill="white"/><path d="M6 6h5v5H6zm10 0h5v5h-5zm-5 5h5v5h-5zm10 0h5v5h-5zM6 16h5v5H6zm10 0h5v5h-5zm-5 5h5v5h-5zm10 0h5v5h-5z" fill="#25292e"/></g></svg>';
+function selectedSVG(){return '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 32 32"><circle cx="16" cy="16" r="13" fill="#ff8a1f" stroke="white" stroke-width="3"/></svg>'}
+const routeBlue='#2878d7';
+let pointMarkers=[],styleFrame=0;
+function routeWidth(){return 3.5}
+function scheduleMapStyle(){if(!styleFrame)styleFrame=requestAnimationFrame(()=>{styleFrame=0;applyMapStyle()})}
+function applyMapStyle(){
+    if(!map)return;
+    if(provider==='google3d')return;
+    const width=routeWidth();
+    for(const l of [creatorLine,...Object.values(dashboardLines)]){
+        if(!l)continue;
+        if(provider==='google')l.setOptions({strokeWeight:width});else l.setStyle({weight:width});
+    }
+    // Endpoints remain visible at every zoom. Only show editing handles when
+    // separated in screen space, so dense imported points cannot cover a route.
+    const projection=provider==='google'?map.getProjection():null;
+    if(provider==='google'&&!projection)return;
+    const project=p=>{
+        if(provider==='osm'||provider==='esri')return map.latLngToContainerPoint([p.lat,p.lng]);
+        const q=projection.fromLatLngToPoint(new google.maps.LatLng(p.lat,p.lng));
+        const scale=2**map.getZoom();return {x:q.x*scale,y:q.y*scale};
+    };
+    const occupied=new Map();
+    const key=(x,y)=>x+','+y;
+    const cell=p=>({x:Math.floor(p.x/28),y:Math.floor(p.y/28)});
+    const occupy=p=>{const c=cell(p),k=key(c.x,c.y);if(!occupied.has(k))occupied.set(k,[]);occupied.get(k).push(p)};
+    for(const record of pointMarkers)if(record.endpoint)occupy(project(record.point));
+    for(const record of pointMarkers){
+        const q=project(record.point),c=cell(q);
+        let spaced=true;
+        if(!record.endpoint&&!record.point.manual){
+            for(let x=c.x-1;x<=c.x+1;x++)for(let y=c.y-1;y<=c.y+1;y++){
+                if((occupied.get(key(x,y))||[]).some(p=>Math.hypot(q.x-p.x,q.y-p.y)<28))spaced=false;
+            }
+            if(spaced)occupy(q);
+        }
+        if(record.visible===spaced)continue;
+        record.visible=spaced;
+        if(provider==='google')record.marker.setVisible(spaced);
+        else {
+            record.marker.setOpacity(spaced?1:0);
+            const element=record.marker.getElement();
+            if(element)element.style.pointerEvents=spaced?'auto':'none';
+        }
+    }
+}
+function installSmoothWheel(target){
+let zoomFrame=0,targetZoom=null,zoomAnchor=null,anchorLatLng=null,zoomIdleTimer=0,zoomGesture=false,nativePinchActive=false,pinchStartZoom=0;
+function finishZoomGesture(){
+ clearTimeout(zoomIdleTimer);
+ if(zoomGesture){zoomGesture=false;target._moveEnd(true);target.fire('viewreset');}
+ targetZoom=null;
+}
+function stopSmoothZoom(){cancelAnimationFrame(zoomFrame);zoomFrame=0;finishZoomGesture();}
+function smoothZoom(){
+ zoomFrame=0;if(targetZoom===null)return;
+ if(!zoomGesture){zoomGesture=true;target._moveStart(true,false);}
+ // Follow the OS-provided wheel momentum directly: one update per display frame,
+ // with no second inertia filter or repeated full view resets.
+ const center=target.unproject(target.project(anchorLatLng,targetZoom).subtract(zoomAnchor.subtract(target.getSize().divideBy(2))),targetZoom);
+ target._move(center,targetZoom,{pinch:true});
+}
+target.getContainer().addEventListener('wheel',e=>{
+ e.preventDefault();
+ if(nativePinchActive)return;
+ if(!zoomGesture&&!zoomFrame)target.stop();
+ zoomAnchor=target.mouseEventToContainerPoint(e);
+ anchorLatLng=target.containerPointToLatLng(zoomAnchor);
+ const delta=e.deltaY*(e.deltaMode===1?16:e.deltaMode===2?target.getSize().y:1);
+ targetZoom=Math.max(target.getMinZoom(),Math.min(24,(targetZoom??target.getZoom())-delta/(e.ctrlKey?30:240)));
+ if(!zoomFrame)zoomFrame=requestAnimationFrame(smoothZoom);
+ clearTimeout(zoomIdleTimer);zoomIdleTimer=setTimeout(()=>{if(zoomFrame){cancelAnimationFrame(zoomFrame);smoothZoom();}finishZoomGesture();},70);
+},{passive:false});
+// Safari/WebKit delivers macOS pinch gestures as scale events on some devices,
+// and as control-wheel events on others. Handle both without double-applying them.
+function pinchAnchor(event){
+ const rect=target.getContainer().getBoundingClientRect();
+ zoomAnchor=event.clientX||event.clientY?L.point(event.clientX-rect.left,event.clientY-rect.top):target.getSize().divideBy(2);
+ anchorLatLng=target.containerPointToLatLng(zoomAnchor);
+}
+target.getContainer().addEventListener('gesturestart',event=>{
+ event.preventDefault();stopSmoothZoom();target.stop();nativePinchActive=true;pinchStartZoom=target.getZoom();pinchAnchor(event);
+},{passive:false});
+target.getContainer().addEventListener('gesturechange',event=>{
+ event.preventDefault();if(!nativePinchActive||!(event.scale>0))return;
+ targetZoom=Math.max(target.getMinZoom(),Math.min(24,pinchStartZoom+Math.log2(event.scale)*3));
+ if(!zoomFrame)zoomFrame=requestAnimationFrame(smoothZoom);
+},{passive:false});
+target.getContainer().addEventListener('gestureend',event=>{
+ event.preventDefault();if(zoomFrame){cancelAnimationFrame(zoomFrame);smoothZoom();}nativePinchActive=false;finishZoomGesture();
+},{passive:false});
+target.getContainer().addEventListener('mousedown',stopSmoothZoom);
+
+}
+// Use the same stronger, anchor-preserving pinch response for both Google Maps
+// instances. A 2× finger spread changes the zoom by three levels, matching OSM.
+function installGooglePinch(target){
+ const container=target.getDiv();let active=false,startZoom=0,anchorPixel=null,anchorPoint=null,frame=0,zoom=null;
+ function camera(){
+  frame=0;if(!active||zoom===null)return;
+  const projection=target.getProjection();if(!projection||!anchorPoint)return;
+  const scale=256*2**zoom,size=container.getBoundingClientRect();
+  const centerPoint={x:anchorPoint.x-(anchorPixel.x-size.width/2)/scale,y:anchorPoint.y-(anchorPixel.y-size.height/2)/scale};
+  target.moveCamera({center:projection.fromPointToLatLng(centerPoint),zoom});
+ }
+ function anchor(event){
+  const rect=container.getBoundingClientRect();anchorPixel={x:(event.clientX||rect.left+rect.width/2)-rect.left,y:(event.clientY||rect.top+rect.height/2)-rect.top};
+  const projection=target.getProjection();const center=target.getCenter();if(!projection||!center)return;
+  const centerPoint=projection.fromLatLngToPoint(center),scale=256*2**target.getZoom();
+  anchorPoint={x:centerPoint.x+(anchorPixel.x-rect.width/2)/scale,y:centerPoint.y+(anchorPixel.y-rect.height/2)/scale};
+ }
+ container.addEventListener('gesturestart',event=>{
+  event.preventDefault();event.stopImmediatePropagation();cancelAnimationFrame(frame);active=true;startZoom=target.getZoom();anchor(event);
+ },{capture:true,passive:false});
+ container.addEventListener('gesturechange',event=>{
+  if(!active||!(event.scale>0))return;event.preventDefault();event.stopImmediatePropagation();
+  zoom=Math.max(target.get('minZoom')||0,Math.min(target.get('maxZoom')||24,startZoom+Math.log2(event.scale)*3));
+  if(!frame)frame=requestAnimationFrame(camera);
+ },{capture:true,passive:false});
+ container.addEventListener('gestureend',event=>{
+  if(!active)return;event.preventDefault();event.stopImmediatePropagation();if(frame){cancelAnimationFrame(frame);camera()}active=false;zoom=null;
+ },{capture:true,passive:false});
+}
+function installGoogle3DGestures(target){
+ let active=false,startRange=0,zooming=false;
+ const begin=()=>{active=true;startRange=target.range;};
+ const change=scale=>{if(!active||!(scale>0))return;target.range=Math.max(20,Math.min(20000000,startRange/scale**3));};
+ target.addEventListener('gesturestart',e=>{e.preventDefault();e.stopImmediatePropagation();begin()},{capture:true,passive:false});
+ target.addEventListener('gesturechange',e=>{if(!active||!(e.scale>0))return;e.preventDefault();e.stopImmediatePropagation();change(e.scale)},{capture:true,passive:false});
+ target.addEventListener('gestureend',e=>{if(!active)return;e.preventDefault();e.stopImmediatePropagation();active=false},{capture:true,passive:false});
+ // Shift+scroll is a common map zoom gesture; on macOS Command should behave
+ // the same way. Preserve ordinary wheel scrolling for the containing view.
+ target.addEventListener('wheel',e=>{
+  if(!e.shiftKey&&!e.metaKey)return;
+  e.preventDefault();e.stopImmediatePropagation();
+  if(!zooming){zooming=true;startRange=target.range;}
+  target.range=Math.max(20,Math.min(20000000,target.range*Math.exp(e.deltaY*0.003)));
+  clearTimeout(target._modifierZoomTimer);target._modifierZoomTimer=setTimeout(()=>{zooming=false},100);
+ },{capture:true,passive:false});
+}
+function updateDraggedPath(id,position){
+    const anchor=state.points.find(p=>p.id===id);
+    if(!anchor)return;
+    anchor.lat=position.lat;anchor.lng=position.lng;
+    window.cursorAt(position);
+    const anchors=state.points.filter(p=>p.manual).sort((a,b)=>a.time-b.time);
+    let segment=0;
+    for(const p of state.points){
+        if(p.manual)continue;
+        while(segment+1<anchors.length-1&&anchors[segment+1].time<p.time)segment++;
+        const a=anchors[segment],b=anchors[segment+1];
+        if(!a||!b)continue;
+        const fraction=Math.max(0,Math.min(1,(p.time-a.time)/(b.time-a.time||1)));
+        let delta=b.lng-a.lng;if(delta>180)delta-=360;if(delta< -180)delta+=360;
+        p.lat=a.lat+(b.lat-a.lat)*fraction;
+        p.lng=((a.lng+delta*fraction+540)%360)-180;
+    }
+    if(creatorLine){
+        if(provider==='google')creatorLine.setPath(state.points.map(p=>({lat:p.lat,lng:p.lng})));
+        else if(provider==='google3d')creatorLine.path=state.points.map(p=>({lat:p.lat,lng:p.lng}));
+        else creatorLine.setLatLngs(state.points.map(p=>[p.lat,p.lng]));
+    }
+    if(creatorHitLine){if(provider==='google')creatorHitLine.setPath(state.points.map(p=>({lat:p.lat,lng:p.lng})));else creatorHitLine.setLatLngs(state.points.map(p=>[p.lat,p.lng]))}
+    scheduleMapStyle();
+    const positions=new Map(state.points.map(p=>[p.id,p]));
+    for(const [pointID,m] of generatedMarkers){
+        const p=positions.get(pointID);
+        if(!p)continue;
+        if(provider==='google')m.setPosition({lat:p.lat,lng:p.lng});else if(provider==='google3d')m.position={lat:p.lat,lng:p.lng,altitude:0};else m.setLatLng([p.lat,p.lng]);
+    }
+}
+let generatedMarkers=new Map();
+function closeCoordinateEditor(){if(coordEditor){coordEditor.root.remove();coordEditor=null}}
+function showCoordinateEditor(point){
+    closeCoordinateEditor();
+    const root=document.createElement('form');root.id='coord-editor';
+    const label=document.createElement('label');label.textContent='Move point to coordinates';
+    const input=document.createElement('input');input.type='text';input.spellcheck=false;input.autocomplete='off';input.placeholder='38.889485, -77.035219';input.value=point.lat+', '+point.lng;
+    const error=document.createElement('div');error.className='editor-error';error.textContent='Enter latitude, longitude within valid ranges.';
+    const actions=document.createElement('div');actions.className='editor-actions';
+    const cancel=document.createElement('button');cancel.type='button';cancel.textContent='Cancel';cancel.addEventListener('click',e=>{e.preventDefault();closeCoordinateEditor()});
+    const submit=document.createElement('button');submit.type='submit';submit.textContent='Move point';actions.append(cancel,submit);root.append(label,input,error,actions);
+    for(const type of ['pointerdown','mousedown','click','dblclick'])root.addEventListener(type,e=>e.stopPropagation());
+    root.addEventListener('submit',e=>{e.preventDefault();const parts=input.value.split(',');const lat=parts.length===2?Number(parts[0].trim()):NaN,lng=parts.length===2?Number(parts[1].trim()):NaN;if(!Number.isFinite(lat)||!Number.isFinite(lng)||Math.abs(lat)>90||Math.abs(lng)>180){error.style.display='block';input.focus();return}send('move',{id:point.id,lat,lng});closeCoordinateEditor()});
+    root.addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();closeCoordinateEditor()}});
+    document.getElementById('map').append(root);coordEditor={root,input,pointID:point.id};
+    let x=12,y=12;const size=map.getDiv?.()||map.getContainer?.();
+    if(provider==='osm'||provider==='esri'){const p=map.latLngToContainerPoint([point.lat,point.lng]);x=p.x+12;y=p.y+10}
+    else if(provider==='google'){const projection=map.getProjection(),center=map.getCenter();if(projection&&center){const p=projection.fromLatLngToPoint(new google.maps.LatLng(point.lat,point.lng)),c=projection.fromLatLngToPoint(center),scale=2**map.getZoom();let dx=p.x-c.x;if(dx>.5)dx-=1;if(dx<-.5)dx+=1;x=size.clientWidth/2+dx*scale+12;y=size.clientHeight/2+(p.y-c.y)*scale+10}}
+    else{x=12;y=12}
+    const w=300,h=125;x=Math.max(8,Math.min(size.clientWidth-w-8,x));y=Math.max(8,Math.min(size.clientHeight-h-8,y));root.style.left=x+'px';root.style.top=y+'px';input.focus();input.select();
+}
+function marker(p,index,total){
+    if(!p.manual&&index!==0&&index!==total-1)return;
+    const finish=state.hasVideo&&p.manual&&Math.abs(p.time-state.duration)<0.001;
+    const start=index===0&&!finish;
+    const endpoint=start||finish;
+    const selected=p.manual&&state.focusedAnchorID===p.id;
+    const color=index===0?'#31b86a':p.manual?'white':'#89939d';
+    let m;
+    if(provider==='google'){
+        const base=endpoint?(finish?finishSVG:startSVG):manualSVG,svg=selected?selectedSVG():base,size=16;
+        const icon={url:'data:image/svg+xml;charset=UTF-8,'+encodeURIComponent(svg),scaledSize:new google.maps.Size(size,size),anchor:new google.maps.Point(size/2,size/2)};
+        m=new google.maps.Marker({map,position:{lat:p.lat,lng:p.lng},draggable:p.manual,icon,optimized:true,zIndex:selected?10000:endpoint?1000:100});
+        event(m,'rightclick',()=>send('delete',{id:p.id}));
+    }else if(provider==='google3d'){
+        m=new google3DLibrary.MarkerInteractiveElement({position:{lat:p.lat,lng:p.lng,altitude:0},title:endpoint?(start?'Start':'Finish'):'Path anchor',anchorLeft:'-50%',anchorTop:'-50%'});
+        const base=endpoint?(finish?finishSVG:startSVG):manualSVG;m.innerHTML=selected?selectedSVG():base;if(selected)m.style.zIndex='10000';
+        if(p.manual){m.style.touchAction='none';m.addEventListener('pointerdown',e=>{if(e.button!==0)return;e.preventDefault();e.stopPropagation();draggingID=p.id;clearTimeout(clickTimer);if(cursor){remove(cursor);cursor=null}try{m.setPointerCapture(e.pointerId)}catch(_){}},{capture:true});m.addEventListener('pointerup',e=>{if(draggingID!==p.id)return;e.preventDefault();e.stopPropagation();const moved={lat:p.lat,lng:p.lng};draggingID=null;if(pendingState){pendingState.points=state.points;state=pendingState;pendingState=null}window.cursorAt(moved);send('move',{id:p.id,...moved})},{capture:true});m.addEventListener('pointercancel',()=>{if(draggingID===p.id)draggingID=null},{capture:true})}
+        map.append(m);
+    }else{
+        const base=endpoint?(finish?finishSVG:startSVG):manualSVG,html=selected?selectedSVG():base,size=16;
+        m=L.marker([p.lat,p.lng],{draggable:p.manual,zIndexOffset:selected?10000:endpoint?1000:100,icon:L.divIcon({className:'',html,iconSize:[size,size],iconAnchor:[size/2,size/2]})}).addTo(map);
+        event(m,'contextmenu',e=>{L.DomEvent.stopPropagation(e);send('delete',{id:p.id})});
+    }
+    const position=e=>provider==='google'?coord(e):provider==='google3d'?{lat:p.lat,lng:p.lng}:{lat:m.getLatLng().lat,lng:m.getLatLng().lng};
+    event(m,'dragstart',()=>{draggingID=p.id;clearTimeout(clickTimer);if(cursor){remove(cursor);cursor=null}});
+    event(m,'drag',e=>updateDraggedPath(p.id,position(e)));
+    event(m,'dragend',e=>{
+        const moved=position(e);
+        updateDraggedPath(p.id,moved);
+        draggingID=null;
+        window.cursorAt(moved);
+        // Commit once to Swift; keep native markers alive throughout the drag.
+        if(pendingState){pendingState.points=state.points;state=pendingState;pendingState=null}
+        send('move',{id:p.id,...moved});
+    });
+    event(m,'click',()=>{clearTimeout(clickTimer);if(p.manual)send('focusAnchor',{id:p.id});send('seek',{time:p.time})});
+    if(p.manual){
+        event(m,'mouseover',e=>{setMapPathCursor(true);previewAtMapEvent(e)});
+        event(m,'mousemove',previewAtMapEvent);
+        event(m,'mouseout',()=>{if(provider==='google3d')endPathPreview()});
+        if(provider==='google3d')m.addEventListener('dblclick',e=>{e.preventDefault();e.stopPropagation();showCoordinateEditor(p)});
+        else event(m,'dblclick',e=>{clearTimeout(clickTimer);if(provider==='google'){e.stop?.();e.domEvent?.stopPropagation()}else L.DomEvent.stopPropagation(e);showCoordinateEditor(p)});
+    }
+    pointMarkers.push({point:p,marker:m,endpoint});
+    if(!p.manual)generatedMarkers.set(p.id,m);
+    layers.push(m);
+}
+function dashboardEndpoint(p,finish,trackID){
+    const svg=finish?finishSVG:startSVG;
+    let m;
+    if(provider==='google')m=new google.maps.Marker({map,position:{lat:p.lat,lng:p.lng},icon:{url:'data:image/svg+xml;charset=UTF-8,'+encodeURIComponent(svg),scaledSize:new google.maps.Size(16,16),anchor:new google.maps.Point(8,8)},zIndex:1000});
+    else m=L.marker([p.lat,p.lng],{zIndexOffset:1000,icon:L.divIcon({className:'',html:svg,iconSize:[16,16],iconAnchor:[8,8]})}).addTo(map);
+    event(m,'click',()=>send('select',{id:trackID}));
+    layers.push(m);
+}
+function fitGooglePoints(points){if(!points.length)return;let b=new google.maps.LatLngBounds();points.forEach(p=>b.extend({lat:p.lat,lng:p.lng}));let span=b.toSpan();let c=b.getCenter();b=new google.maps.LatLngBounds({lat:c.lat()-span.lat()*.7,lng:c.lng()-span.lng()*.7},{lat:c.lat()+span.lat()*.7,lng:c.lng()+span.lng()*.7});map.fitBounds(b,30)}
+function fit3DPoints(points){if(!points.length)return;const lats=points.map(p=>p.lat),lngs=points.map(p=>p.lng),south=Math.min(...lats),north=Math.max(...lats),west=Math.min(...lngs),east=Math.max(...lngs),lat=(south+north)/2,lng=(west+east)/2;const span=Math.max((north-south)*111320,(east-west)*111320*Math.max(.05,Math.cos(lat*Math.PI/180)));map.center={lat,lng,altitude:0};map.range=Math.max(1200,span*1.7);map.tilt=0;map.heading=0}
+window.update=async function(s){if(draggingID){pendingState=s;return}const wanted=s.google?(s.google3D?'google3d':'google'):s.osmSatellite?'esri':'osm';let handoffCamera=null;if(map&&provider!==wanted){handoffCamera=currentCamera();if(handoffCamera){s={...s,camera:handoffCamera};send('camera',handoffCamera)}}state=s;await setup(s);if(!map)return;if(handoffCamera)applyCamera(handoffCamera);let signature=JSON.stringify([s.google,s.osmSatellite,s.google3D,s.googleSatellite,s.key,s.dashboard,s.points,s.focusedAnchorID,s.tracks,s.duration,s.hasVideo]);if(s.dashboard&&signature===renderSignature&&s.fit===fit){Object.entries(dashboardLines).forEach(([id,l])=>{let color=id===s.selected||id===s.hovered?'#1d65bd':routeBlue;provider==='google'?l.setOptions({strokeColor:color}):l.setStyle({color})});if(coverageLayer)coverageLayer.setMap(s.coverage&&provider==='google'?map:null);return}renderSignature=signature;dashboardLines={};creatorLine=null;creatorHitLine=null;pointMarkers=[];generatedMarkers.clear();layers.forEach(remove);layers=[];if(coverageLayer)coverageLayer.setMap(s.coverage&&provider==='google'?map:null);
+let all=[];if(s.dashboard){for(let t of s.tracks){all.push(...t.points);let l=line(t.points,t.id===s.selected||t.id===s.hovered?'#1d65bd':routeBlue,routeWidth());dashboardLines[t.id]=l;if(t.points.length){dashboardEndpoint(t.points[0],false,t.id);if(t.points.length>1)dashboardEndpoint(t.points[t.points.length-1],true,t.id)}let interaction=lineHitArea(t.points,routeWidth(),3)||l;event(interaction,'mouseover',()=>send('hover',{id:t.id}));event(interaction,'mouseout',()=>send('hover',{id:''}));event(interaction,'click',()=>send('select',{id:t.id}))}}
+else{all=s.points;if(all.length>1){let l=line(all,routeBlue,routeWidth());creatorLine=l;creatorHitLine=lineHitArea(all,routeWidth());let interaction=creatorHitLine||l;event(interaction,'mouseover',()=>setMapPathCursor(true));event(interaction,'mousemove',previewAtMapEvent);event(interaction,'mouseout',()=>{if(provider==='google3d')endPathPreview()});event(interaction,'click',e=>{const now=performance.now(),double=now-lineLastClick<400;lineLastClick=now;clearTimeout(lineClickTimer);if(provider==='google3d'||double){lineLastClick=0;let p=nearest(all,coord(e));if(p)send('insert',p)}else lineClickTimer=setTimeout(()=>{lineLastClick=0;let p=nearest(all,coord(e));if(p)send('insert',p)},400)})}all.forEach((p,i)=>marker(p,i,all.length));}
+const hasSavedCamera=s.camera&&Number.isFinite(s.camera.lat)&&Number.isFinite(s.camera.lng)&&Number.isFinite(s.camera.zoom);
+const initialCameraPoints=s.dashboard?all:(!s.points.length?s.tracks.flatMap(t=>t.points):(!hasSavedCamera?s.points:[]));
+if(initialCameraPoints.length&&!hasSavedCamera){fit=s.fit||'__dashboard_initial_camera__';if(provider==='google3d')fit3DPoints(initialCameraPoints);else fitGooglePoints(initialCameraPoints)}
+else if(s.fit&&fit!==s.fit&&all.length){fit=s.fit;let target=s.dashboard?(s.tracks.find(t=>t.id===s.fit)?.points||all):all;if(provider==='google')fitGooglePoints(target);else if(provider==='google3d')fit3DPoints(target);else map.fitBounds(L.latLngBounds(target.map(p=>[p.lat,p.lng])).pad(.2),{maxZoom:18})}
+applyMapStyle();if(!pathHover)window.cursorAt(null);};
+window.cursorAt=function(p){cursorPending=p;if(cursorFrame)return;cursorFrame=requestAnimationFrame(()=>{cursorFrame=0;const next=pathHover?cursorPending:null;if(!next||!map){if(cursor){remove(cursor);cursor=null}return}if(provider==='google'){if(cursor)cursor.setPosition(next);else cursor=new google.maps.Marker({map,position:next,icon:{path:google.maps.SymbolPath.CIRCLE,scale:6,fillColor:'#168bff',fillOpacity:1,strokeColor:'white',strokeWeight:1.5},zIndex:100000,clickable:false})}else if(provider==='google3d'){if(cursor)cursor.position={lat:next.lat,lng:next.lng,altitude:0};else{cursor=new google3DLibrary.Marker3DElement({position:{lat:next.lat,lng:next.lng,altitude:0},sizePreserved:true});cursor.innerHTML='<span class="preview-dot"></span>';cursor.style.pointerEvents='none';cursor.style.zIndex='100000';map.append(cursor)}}else if(cursor)cursor.setLatLng([next.lat,next.lng]);else cursor=L.marker([next.lat,next.lng],{pane:'markerPane',zIndexOffset:100000,interactive:false,icon:L.divIcon({className:'',html:'<span class=preview-dot></span>',iconSize:[12,12],iconAnchor:[6,6]})}).addTo(map)})};
+let resizeFrame=0;new ResizeObserver(()=>{if(resizeFrame)return;resizeFrame=requestAnimationFrame(()=>{resizeFrame=0;if(!map)return;if(provider==='osm'||provider==='esri')map.invalidateSize({pan:false,debounceMoveend:true});else if(provider==='google')google.maps.event.trigger(map,'resize')})}).observe(document.getElementById('map'));
 send('ready');
 </script></body></html>
