@@ -70,11 +70,17 @@ struct TimelineView: View {
                     .gesture(DragGesture(minimumDistance:0).onChanged { value in
                         guard model.videoURL != nil else { return }
                         if !dragging { dragging=true; thumbnails.cancel(); model.beginScrubbing() }
-                        model.seek(time(at:value.location.x,width:geo.size.width),exact:false)
+                        model.preview(at:time(at:value.location.x,width:geo.size.width))
                     }.onEnded { value in
                         guard dragging else { return }
-                        model.endScrubbing(at:time(at:value.location.x,width:geo.size.width))
+                        let t=time(at:value.location.x,width:geo.size.width)
+                        model.endScrubbing(at:t)
+                        if model.focusedAnchorID == nil { model.lockedPreviewTime=t; model.previewTime=t }
                         dragging=false
+                    })
+                    .simultaneousGesture(SpatialTapGesture(count:2).onEnded { value in
+                        guard model.videoURL != nil else { return }
+                        model.addAnchorOnPath(at:time(at:value.location.x,width:geo.size.width))
                     })
                 RoundedRectangle(cornerRadius:6).fill(Color.orange.opacity(0.10)).frame(width:geo.size.width*progress).allowsHitTesting(false)
                 Canvas { context, size in
@@ -91,13 +97,15 @@ struct TimelineView: View {
                     let fraction=max(0,min(1,anchor.time/max(1,model.duration)))
                     Button {
                         model.focusedAnchorID=anchor.id
+                        model.lockedPreviewTime=nil
+                        model.previewTime=nil
                         model.controls=true
                     } label: {
                         anchorGlyph(anchor,selected:model.focusedAnchorID==anchor.id).frame(width:18,height:18).contentShape(Circle())
                     }
                     .buttonStyle(.plain)
                     .help("Select anchor at \(clock(anchor.time))")
-                    .position(x:max(9,min(geo.size.width-9,CGFloat(fraction)*geo.size.width)),y:geo.size.height-9)
+                    .position(x:CGFloat(fraction)*geo.size.width,y:geo.size.height-9)
                 }
                 RoundedRectangle(cornerRadius:2).fill(.orange)
                     .frame(width:4,height:40)
@@ -105,6 +113,7 @@ struct TimelineView: View {
                     .allowsHitTesting(false)
             }
             .frame(width:geo.size.width,height:43)
+            .clipped()
             .contentShape(Rectangle())
             .overlay(alignment:.topLeading) {
                 if let hover, !dragging, model.videoURL != nil {
@@ -128,13 +137,14 @@ struct TimelineView: View {
                     let t = time(at:location.x,width:geo.size.width)
                     hover=t; model.previewTime=t; thumbnails.request(t)
                 case .ended:
-                    hover=nil; model.previewTime=nil; thumbnails.cancel()
+                    hover=model.lockedPreviewTime; model.previewTime=model.lockedPreviewTime; thumbnails.cancel()
                 }
             }
         }
         .frame(height:43)
+        .onExitCommand { model.escapeSelection(); hover=nil }
         .onChange(of:model.videoURL,initial:true) { _,url in thumbnails.configure(url:url) }
-        .onDisappear { thumbnails.cancel(); model.previewTime=nil }
+        .onDisappear { thumbnails.cancel(); model.previewTime=model.lockedPreviewTime }
     }
     private var progress: Double { let position=model.previewTime ?? model.time;return model.duration > 0 ? max(0,min(1,position/model.duration)) : 0 }
     private var scrubberAnchors: [Point] { model.points.filter(\.manual).sorted{$0.time<$1.time} }

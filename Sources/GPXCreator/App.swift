@@ -114,6 +114,10 @@ struct ContentView: View {
                 // Leave the native traffic lights unobstructed.
                 WindowControlsPositioner().frame(width:88,height:44)
                 Spacer()
+                if let message=model.loadingMessage {
+                    ProgressView().controlSize(.small)
+                    Text(message).font(.caption).foregroundStyle(.secondary)
+                }
                 Button { model.choose(dashboard:model.tab==1) } label: {
                     Image(systemName:"plus").frame(width:32,height:32).contentShape(Rectangle())
                 }.buttonStyle(IconSquareButtonStyle()).help(model.tab==1 ? "Import GPX" : "Import video or GPX")
@@ -171,6 +175,7 @@ struct ContentView: View {
                 }.padding(.bottom,8).padding(.trailing,8)
             }
         }.background(WindowGlassBackground()).ignoresSafeArea(.container,edges:.top)
+        .onExitCommand { model.escapeSelection() }
         .onAppear { videoHeightFraction=savedVideoHeightFraction }
                 .alert("Unable to complete action",isPresented:Binding(get:{model.error != nil},set:{if !$0 {model.error=nil}})) { Button("OK") { model.error=nil } } message: { Text(model.error ?? "") }
     }
@@ -213,7 +218,7 @@ struct ContentView: View {
             Divider()
             ScrollViewReader { proxy in ScrollView { LazyVStack(spacing:6) {
                 if model.tracks.isEmpty { VStack(spacing:12) { Image(systemName:"map").font(.largeTitle);Text("Import GPX files to see them on the map.").font(.caption).multilineTextAlignment(.center) }.foregroundStyle(.secondary).padding(30) }
-                ForEach(model.tracks) { track in TrackRow(track:track,active:model.selected==track.id || model.hovered==track.id,select:{model.selected=track.id;model.fitID="";DispatchQueue.main.async {model.fitID=track.id}},delete:{model.recordUndo();model.tracks.removeAll {$0.id==track.id};model.persist()}).id(track.id) }
+                ForEach(model.tracks) { track in TrackRow(model:model,track:track,active:model.selected==track.id || model.hovered==track.id,select:{model.selected=track.id;model.fitID="";DispatchQueue.main.async {model.fitID=track.id}},edit:track.creatorState == nil ? nil : {model.editCreatorPathFromDashboard(id:track.id)},delete:{model.recordUndo();model.tracks.removeAll {$0.id==track.id};model.persist()}).id(track.id) }
             }.padding(10) }.onChange(of:model.hovered) { _,id in if let id { withAnimation {proxy.scrollTo(id,anchor:.center)} } }.onChange(of:model.selected) { _,id in if let id {withAnimation {proxy.scrollTo(id,anchor:.center)}} } }
             Spacer(minLength:0)
             Text("Imported paths are saved in the app. Removing one leaves your original file untouched.").font(.caption).foregroundStyle(.secondary).padding(18)
@@ -265,19 +270,40 @@ struct ContentView: View {
                 VStack(alignment:.leading,spacing:16) {
                     Text("PATH CONTROLS").font(.system(size:11,weight:.semibold)).tracking(1.3)
                     Label("\(model.points.count) manual anchors",systemImage:"mappin.and.ellipse").font(.headline)
-                    Text("Scrub the video, then click the map to add an anchor. Drag an anchor to move it.").font(.callout).foregroundStyle(.secondary)
-                    HStack { Text("Samples per second").font(.caption);Spacer();TextField("",value:Binding(get:{model.samplesPerSecond},set:{model.setSamplesPerSecond($0)}),format:.number).textFieldStyle(.roundedBorder).multilineTextAlignment(.trailing).frame(width:78) }
-                    if !model.importedGPX && model.points.count>1 { Text("\(model.rendered.count) total points · generated at \(model.samplesPerSecond) samples per second").font(.caption).foregroundStyle(.secondary) }
-                    Text("Double-click an anchor to edit its coordinates. The checkered flag marks an anchor at the end of the video. Right-click an anchor to delete. Click the blue line to insert an anchor.").font(.caption).foregroundStyle(.secondary)
+                    Text("Scrub the video, then double-click the map to add an anchor. Drag an anchor to move it.").font(.callout).foregroundStyle(.secondary)
+                    Picker("Path detail",selection:Binding(get:{model.samplesPerSecond},set:{model.setSamplesPerSecond($0)})) {
+                        Label { Text("GPX · Anchors only") } icon: { Image(systemName:"point.3.filled.connected.trianglepath.dotted").foregroundStyle(.black) }.tag(0)
+                        Label("Walking · 1 per sec",systemImage:"figure.walk").tag(1)
+                        Label("Biking · 5 per sec",systemImage:"bicycle").tag(5)
+                        Label("Driving · 10 per sec",systemImage:"car.fill").tag(10)
+                    }.pickerStyle(.menu)
+                    if !model.importedGPX && model.points.count>1 { Text(model.samplesPerSecond == 0 ? "\(model.rendered.count) anchor points · no added samples" : "\(model.rendered.count) total points · generated at \(model.samplesPerSecond) samples per second").font(.caption).foregroundStyle(.secondary) }
+                    Text("Double-click an anchor to edit its coordinates. The checkered flag marks an anchor at the end of the video. Right-click an anchor to delete. Double-click the blue line to insert an anchor.").font(.caption).foregroundStyle(.secondary)
                     if model.gpxURL == nil && !model.points.isEmpty {
                         Button { model.clearPath() } label: { Label("Clear path",systemImage:"trash").frame(maxWidth:.infinity,alignment:.leading).padding(10) }.buttonStyle(FlatButtonStyle())
                     }
                 }.padding(20)
             }
             Spacer(minLength:0)
-            Button {model.export()} label: {
-                Label("Export GPX",systemImage:"square.and.arrow.up").frame(maxWidth:.infinity)
-            }.buttonStyle(.borderedProminent).tint(.orange).disabled(model.points.isEmpty).padding(20)
+            VStack(spacing:8) {
+                if model.videoURL != nil {
+                    if model.recordingStart != nil {
+                        DatePicker("Video recording started",selection:Binding(get:{model.recordingStart ?? Date()},set:{model.recordingStart=$0}),displayedComponents:[.date,.hourAndMinute])
+                            .datePickerStyle(.compact)
+                    } else if model.isLoadingRecordingStart {
+                        ProgressView("Reading video recording time…")
+                    } else {
+                        Text("No recording time found in the video. Set it before exporting for Street View.").font(.caption).foregroundStyle(.secondary)
+                        Button("Manually set start time") { model.recordingStart=Date() }
+                    }
+                }
+                Button { model.saveCreatorPathToDashboard() } label: {
+                    Label(model.editingTrackID == nil ? "Save to Path Dashboard" : "Update in Path Dashboard",systemImage:"square.and.arrow.down").frame(maxWidth:.infinity)
+                }.buttonStyle(.bordered).disabled(model.points.isEmpty)
+                Button {model.export()} label: {
+                    Label(model.samplesPerSecond == 0 ? "Export anchors as GPX" : "Export GPX",systemImage:"square.and.arrow.up").frame(maxWidth:.infinity)
+                }.buttonStyle(.borderedProminent).tint(.orange).disabled(model.points.isEmpty || (model.videoURL != nil && model.recordingStart == nil))
+            }.padding(20)
         }
     }
     func clock(_ t: Double) -> String { let milliseconds=Int(max(0,t)*1000);return String(format:"%02d:%02d:%02d.%03d",milliseconds/3_600_000,(milliseconds/60_000)%60,(milliseconds/1_000)%60,milliseconds%1_000) }
@@ -376,21 +402,54 @@ struct SidebarFileRow: View {
     let detail: String
     let icon: String
     var active=false
+    var appIcon=false
+    var blackIcon=false
     let select: () -> Void
+    var edit: (() -> Void)? = nil
     let delete: () -> Void
+    var rename: ((String) -> Void)? = nil
+    var visibility: Bool? = nil
+    var toggleVisibility: (() -> Void)? = nil
     @State private var hover=false
+    @State private var renaming=false
+    @State private var draftTitle=""
+    @FocusState private var titleFocused: Bool
     var body: some View {
         HStack(spacing:10) {
             Button(action:select) {
                 HStack(spacing:10) {
-                    Image(systemName:icon).foregroundStyle(active ? .orange : Color(red:0.08,green:0.23,blue:0.47))
+                    if appIcon { Image(systemName:"point.3.filled.connected.trianglepath.dotted").foregroundStyle(.black) }
+                    else { Image(systemName:icon).foregroundStyle(blackIcon ? .black : active ? .orange : Color(red:0.08,green:0.23,blue:0.47)) }
                     VStack(alignment:.leading,spacing:5) {
-                        Text(title).font(.system(size:13,weight:.medium)).lineLimit(2)
+                        if renaming, rename != nil {
+                            TextField("Path name",text:$draftTitle)
+                                .font(.system(size:13,weight:.medium))
+                                .textFieldStyle(.plain)
+                                .focused($titleFocused)
+                                .onSubmit(commitRename)
+                                .onExitCommand { renaming=false;titleFocused=false }
+                                .onAppear { draftTitle=title;DispatchQueue.main.async { titleFocused=true } }
+                        } else {
+                            Text(title).font(.system(size:13,weight:.medium)).lineLimit(2)
+                                .onTapGesture(count:2) {
+                                    guard rename != nil else { return }
+                                    draftTitle=title;renaming=true
+                                }
+                                .help(rename == nil ? "" : "Double-click to rename")
+                        }
                         Text(detail).font(.system(size:11)).foregroundStyle(.secondary)
                     }
                     Spacer(minLength:0)
                 }.contentShape(Rectangle())
             }.buttonStyle(.plain)
+            if let edit {
+                Button(action:edit) {Image(systemName:"pencil").foregroundStyle(.secondary)}
+                    .buttonStyle(.plain).help("Edit in GPX Creator")
+            }
+            if let visibility, let toggleVisibility {
+                Button(action:toggleVisibility) {Image(systemName:visibility ? "eye" : "eye.slash").foregroundStyle(visibility ? Color.secondary : Color.secondary.opacity(0.55))}
+                    .buttonStyle(.plain).help(visibility ? "Hide path on map" : "Show path on map")
+            }
             Button(action:delete) {Image(systemName:"trash").foregroundStyle(.secondary)}
                 .buttonStyle(.plain).help("Remove from app")
                 .opacity(hover ? 1 : 0).allowsHitTesting(hover)
@@ -398,11 +457,20 @@ struct SidebarFileRow: View {
             .background(active ? Color.orange.opacity(0.12) : hover ? Color.gray.opacity(0.06) : .clear,in:RoundedRectangle(cornerRadius:10))
             .contentShape(Rectangle()).onHover {hover=$0}
     }
+    private func commitRename() {
+        let value=draftTitle.trimmingCharacters(in:.whitespacesAndNewlines)
+        if !value.isEmpty, value != title { rename?(value) }
+        renaming=false;titleFocused=false
+    }
 }
 struct TrackRow: View {
-    let track: Track;let active: Bool;let select:()->Void;let delete:()->Void
+    @ObservedObject var model: AppModel
+    let track: Track;let active: Bool;let select:()->Void;let edit:(()->Void)?;let delete:()->Void
     var body: some View {
-        SidebarFileRow(title:track.name,detail:track.date.formatted(date:.abbreviated,time:.shortened),icon:"point.topleft.down.to.point.bottomright.curvepath",active:active,select:select,delete:delete)
+        SidebarFileRow(title:track.name,detail:track.date.formatted(date:.abbreviated,time:.shortened),icon:"point.topleft.down.to.point.bottomright.curvepath",active:active,appIcon:track.creatorState != nil,blackIcon:true,select:select,edit:edit,delete:delete,rename:{ value in
+            guard let index=model.tracks.firstIndex(where:{$0.id==track.id}),model.tracks[index].name != value else { return }
+            model.recordUndo();model.tracks[index].name=value;model.persist()
+        },visibility:track.isVisible,toggleVisibility:{model.toggleTrackVisibility(track.id)})
     }
 }
 struct ImportedFileRow: View {
@@ -412,7 +480,7 @@ struct ImportedFileRow: View {
     let delete: () -> Void
     @State private var detail=""
     var body: some View {
-        SidebarFileRow(title:url.lastPathComponent,detail:detail,icon:icon,select:select,delete:delete)
+        SidebarFileRow(title:url.lastPathComponent,detail:detail,icon:icon,blackIcon:icon=="point.topleft.down.to.point.bottomright.curvepath",select:select,delete:delete)
             .onChange(of:url,initial:true) { _,url in
                 detail=((try? url.resourceValues(forKeys:[.contentModificationDateKey]))?.contentModificationDate).map { $0.formatted(date:.abbreviated,time:.shortened) } ?? url.pathExtension.uppercased()
             }
