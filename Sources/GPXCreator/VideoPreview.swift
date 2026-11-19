@@ -39,21 +39,6 @@ final class ZoomableVideoView: NSView {
         playerView.controlsStyle = .none
         playerView.videoGravity = .resizeAspectFill
         addSubview(playerView)
-        let zoomOut = NSButton(title:"−",target:self,action:#selector(zoomOut))
-        let zoomIn = NSButton(title:"+",target:self,action:#selector(zoomIn))
-        let reset = NSButton(title:"Reset",target:self,action:#selector(resetZoom))
-        let controls = NSStackView(views:[zoomOut,zoomIn,reset])
-        controls.spacing = 4
-        controls.translatesAutoresizingMaskIntoConstraints = false
-        for button in [zoomOut,zoomIn,reset] { button.bezelStyle = .rounded }
-        zoomOut.toolTip = "Zoom out (or scroll / pinch at the cursor)"
-        zoomIn.toolTip = "Zoom in (or scroll / pinch at the cursor)"
-        reset.toolTip = "Reset video zoom (or double-click video)"
-        addSubview(controls)
-        NSLayoutConstraint.activate([
-            controls.trailingAnchor.constraint(equalTo:trailingAnchor,constant:-10),
-            controls.topAnchor.constraint(equalTo:topAnchor,constant:10)
-        ])
         toolTip = "Scroll or pinch to zoom at the cursor. Drag to pan. Double-click to reset."
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -83,12 +68,6 @@ final class ZoomableVideoView: NSView {
         origin.x = min(0,max(bounds.width*(1-zoom),origin.x))
         origin.y = min(0,max(bounds.height*(1-zoom),origin.y))
     }
-    private var cursorAnchor: CGPoint {
-        guard let window else { return CGPoint(x:bounds.midX,y:bounds.midY) }
-        return convert(window.mouseLocationOutsideOfEventStream,from:nil)
-    }
-    @objc private func zoomIn() { setZoom(zoom*1.25,at:cursorAnchor) }
-    @objc private func zoomOut() { setZoom(zoom/1.25,at:cursorAnchor) }
     @objc func resetZoom() {
         zoom = 1
         origin = .zero

@@ -108,6 +108,7 @@ struct ContentView: View {
     @AppStorage("videoHeightFraction") private var savedVideoHeightFraction=0.5
     @State private var videoHeightFraction=0.5
     @State private var videoResizeStart: Double?
+    @FocusState private var recordingStartFocused: Bool
     var body: some View {
         VStack(spacing:0) {
             HStack(spacing:8) {
@@ -290,6 +291,8 @@ struct ContentView: View {
                     if model.recordingStart != nil {
                         DatePicker("Video recording started",selection:Binding(get:{model.recordingStart ?? Date()},set:{model.recordingStart=$0}),displayedComponents:[.date,.hourAndMinute])
                             .datePickerStyle(.compact)
+                            .focused($recordingStartFocused)
+                            .background(ClickAwayObserver(commit:{ recordingStartFocused=false }))
                     } else if model.isLoadingRecordingStart {
                         ProgressView("Reading video recording time…")
                     } else {
@@ -397,6 +400,42 @@ struct FlatButtonStyle: ButtonStyle {
         }
     }
 }
+// Observe clicks without consuming them, so the clicked control still works.
+struct ClickAwayObserver: NSViewRepresentable {
+    var commit: () -> Void
+    func makeNSView(context: Context) -> ObserverView { ObserverView(commit:commit) }
+    func updateNSView(_ view: ObserverView,context: Context) { view.commit=commit }
+    static func dismantleNSView(_ view: ObserverView,coordinator: ()) { view.stopObserving() }
+
+    final class ObserverView: NSView {
+        var commit: () -> Void
+        private var monitor: Any?
+        init(commit: @escaping () -> Void) {
+            self.commit=commit
+            super.init(frame:.zero)
+        }
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            stopObserving()
+            guard window != nil else { return }
+            monitor=NSEvent.addLocalMonitorForEvents(matching:[.leftMouseDown,.rightMouseDown,.otherMouseDown]) { [weak self] event in
+                guard let self,let window=self.window,event.window === window else { return event }
+                if !self.bounds.contains(self.convert(event.locationInWindow,from:nil)) {
+                    self.commit()
+                }
+                return event
+            }
+        }
+        func stopObserving() {
+            if let monitor { NSEvent.removeMonitor(monitor) }
+            monitor=nil
+        }
+        deinit { stopObserving() }
+    }
+}
+
 struct SidebarFileRow: View {
     let title: String
     let detail: String
@@ -424,16 +463,19 @@ struct SidebarFileRow: View {
                         if renaming, rename != nil {
                             TextField("Path name",text:$draftTitle)
                                 .font(.system(size:13,weight:.medium))
-                                .textFieldStyle(.plain)
+                                .textFieldStyle(.roundedBorder)
                                 .focused($titleFocused)
+                                .background(ClickAwayObserver(commit:commitRename))
                                 .onSubmit(commitRename)
                                 .onExitCommand { renaming=false;titleFocused=false }
+                                .onChange(of:titleFocused) { _,focused in
+                                    if !focused && renaming { commitRename() }
+                                }
                                 .onAppear { draftTitle=title;DispatchQueue.main.async { titleFocused=true } }
                         } else {
                             Text(title).font(.system(size:13,weight:.medium)).lineLimit(2)
                                 .onTapGesture(count:2) {
-                                    guard rename != nil else { return }
-                                    draftTitle=title;renaming=true
+                                    beginRename()
                                 }
                                 .help(rename == nil ? "" : "Double-click to rename")
                         }
@@ -456,8 +498,19 @@ struct SidebarFileRow: View {
         }.padding(12)
             .background(active ? Color.orange.opacity(0.12) : hover ? Color.gray.opacity(0.06) : .clear,in:RoundedRectangle(cornerRadius:10))
             .contentShape(Rectangle()).onHover {hover=$0}
+            .contextMenu {
+                if rename != nil {
+                    Button("Rename",systemImage:"pencil",action:beginRename)
+                }
+            }
+    }
+    private func beginRename() {
+        guard rename != nil else { return }
+        draftTitle=title
+        renaming=true
     }
     private func commitRename() {
+        guard renaming else { return }
         let value=draftTitle.trimmingCharacters(in:.whitespacesAndNewlines)
         if !value.isEmpty, value != title { rename?(value) }
         renaming=false;titleFocused=false
