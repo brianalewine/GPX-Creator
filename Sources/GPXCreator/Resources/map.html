@@ -1,40 +1,11 @@
-<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"><style>html,body,#map{height:100%;margin:0;font-family:-apple-system,sans-serif}#map{position:relative}#notice{position:absolute;bottom:28px;left:12px;background:white;padding:10px 14px;border-radius:8px;z-index:1000;box-shadow:0 2px 12px #0002;display:none}#coord-editor{position:absolute;z-index:2000;width:300px;box-sizing:border-box;background:white;border:1px solid #d9dee5;border-radius:10px;padding:12px;box-shadow:0 4px 18px #0003}#coord-editor label{display:block;font-size:12px;font-weight:600;margin-bottom:7px}#coord-editor input{box-sizing:border-box;width:100%;padding:8px 9px;border:1px solid #c8cdd3;border-radius:6px;font:13px -apple-system,sans-serif;outline:none}#coord-editor input:focus{border-color:#2878d7;box-shadow:0 0 0 2px #2878d733}#coord-editor .editor-actions{display:flex;justify-content:flex-end;gap:7px;margin-top:9px}#coord-editor button{border:0;border-radius:6px;padding:7px 10px;font:12px -apple-system,sans-serif;cursor:pointer}#coord-editor button[type=submit]{background:#2878d7;color:white}#coord-editor button[type=button]{background:#eef1f4;color:#20242a}#coord-editor .editor-error{color:#b42318;font-size:11px;margin-top:5px;display:none}.point-hit{width:16px;height:16px;display:flex;align-items:center;justify-content:center}.pin{box-sizing:border-box;border:3px solid #2878d7;border-radius:50%;background:white;width:16px;height:16px}.start{background:#32b66b}.auto{width:4px;height:4px;background:#89939d}.endpoint{width:16px;height:16px;display:block;filter:drop-shadow(0 1px 2px #0004)}.preview-dot{width:12px;height:12px;box-sizing:border-box;border-radius:50%;background:#63b4ff;border:1.5px solid white;box-shadow:0 1px 3px #0005}gmp-map-3d{display:block;width:100%;height:100%}</style><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script></head><body><div id="map"></div><div id="notice"></div><script>
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"><style>html,body,#map{height:100%;margin:0;font-family:-apple-system,sans-serif}#map{position:relative}#notice{position:absolute;bottom:28px;left:12px;background:white;padding:10px 14px;border-radius:8px;z-index:1000;box-shadow:0 2px 12px #0002;display:none}#coord-editor{position:absolute;z-index:2000;width:300px;box-sizing:border-box;background:white;border:1px solid #d9dee5;border-radius:10px;padding:12px;box-shadow:0 4px 18px #0003}#coord-editor label{display:block;font-size:12px;font-weight:600;margin-bottom:7px}#coord-editor input{box-sizing:border-box;width:100%;padding:8px 9px;border:1px solid #c8cdd3;border-radius:6px;font:13px -apple-system,sans-serif;outline:none}#coord-editor input:focus{border-color:#2878d7;box-shadow:0 0 0 2px #2878d733}#coord-editor .editor-actions{display:flex;justify-content:flex-end;gap:7px;margin-top:9px}#coord-editor button{border:0;border-radius:6px;padding:7px 10px;font:12px -apple-system,sans-serif;cursor:pointer}#coord-editor button[type=submit]{background:#2878d7;color:white}#coord-editor button[type=button]{background:#eef1f4;color:#20242a}#coord-editor .editor-error{color:#b42318;font-size:11px;margin-top:5px;display:none}.point-hit{width:16px;height:16px;display:flex;align-items:center;justify-content:center}.pin{box-sizing:border-box;border:3px solid #2878d7;border-radius:50%;background:white;width:16px;height:16px}.start{background:#32b66b}.auto{width:4px;height:4px;background:#89939d}.endpoint{width:16px;height:16px;display:block;filter:drop-shadow(0 1px 2px #0004)}.preview-dot{width:12px;height:12px;box-sizing:border-box;border-radius:50%;background:#63b4ff;border:1.5px solid white;box-shadow:0 1px 3px #0005}gmp-map-3d{display:block;width:100%;height:100%}</style><script src="vendor/leaflet.js"></script><link rel="stylesheet" href="vendor/maplibre-gl.css"><script src="vendor/maplibre-gl.js"></script><script src="vendor/leaflet-maplibre-gl.js"></script><script src="vector-style.js"></script><script src="gpu-basemap.js"></script></head><body><div id="map"></div><div id="notice"></div><script>
 const PreciseMap=L.Map.extend({
  _getNewPixelOrigin:function(center,zoom){return this.project(center,zoom).subtract(this.getSize().divideBy(2)).add(this._getMapPanePos());},
  latLngToLayerPoint:function(latlng){return this.project(L.latLng(latlng)).subtract(this.getPixelOrigin());}
 });
-const RetainedTiles=L.TileLayer.extend({
- initialize:function(url,options){
-  // Retina uses one extra source level (at most 2x density), never 3x/4x.
-  // Preserve each service's source limit.
-  const retina=L.Browser.retina;
-  options={...options,detectRetina:true,updateWhenIdle:true,updateWhenZooming:false,updateInterval:250,keepBuffer:1};
-  if(retina){options.maxZoom+=1;if(options.maxNativeZoom!==undefined)options.maxNativeZoom-=1;}
-  L.TileLayer.prototype.initialize.call(this,url,options);this.decoded=new Map();
- },
- _setZoomTransform:function(level,center,zoom){
-  const scale=this._map.getZoomScale(zoom,level.zoom);
-  const translate=level.origin.multiplyBy(scale).subtract(this._map._getNewPixelOrigin(center,zoom));
-  L.DomUtil.setTransform(level.el,translate,scale);
- },
- getEvents:function(){const events=L.TileLayer.prototype.getEvents.call(this);delete events.viewprereset;return events;},
- createTile:function(coords,done){
-  const key=this._tileCoordsToKey(coords),cached=this.decoded.get(key);
-  if(cached){this.decoded.delete(key);cached.className='';cached.style.cssText='';delete cached.dataset.failed;setTimeout(()=>done(null,cached),0);return cached;}
-  return L.TileLayer.prototype.createTile.call(this,coords,done);
- },
- _removeTile:function(key){
-  const record=this._tiles[key];
-  if(record&&record.el.complete&&record.el.naturalWidth&&!record.el.dataset.failed){
-   L.DomEvent.off(record.el);this.decoded.set(key,record.el);
-   while(this.decoded.size>128)this.decoded.delete(this.decoded.keys().next().value);
-   L.GridLayer.prototype._removeTile.call(this,key);
-  }else L.TileLayer.prototype._removeTile.call(this,key);
- }
-});
-
 const LiveTrackRenderer=L.SVG.extend({_onZoom:function(){this._reset();}});
 let dashboardLines={},renderSignature='',creatorLine=null,creatorHitLine=null,draggingID=null,pendingState=null;
+let disposeZoom=()=>{},setupRevision=0;
 let map,provider='',layers=[],state={},coverageLayer,loadedKey='',googlePromise,google3DLibrary,fit='',cursor,cursorFrame=0,cursorPending=null,cursorForce=false,coordEditor=null;
 const send=(type,data={})=>window.webkit.messageHandlers.bridge.postMessage({type,...data});
 const interactionStyle=document.createElement('style');interactionStyle.textContent='.leaflet-interactive{cursor:pointer!important}.preview-dot{display:block;background:#168bff!important;opacity:1!important}';document.head.append(interactionStyle);
@@ -43,25 +14,90 @@ function notice(s){let n=document.getElementById('notice');n.textContent=s;n.sty
 function savedCamera(s){const c=s.camera;if(c&&Number.isFinite(c.lat)&&Number.isFinite(c.lng)&&Number.isFinite(c.zoom))return c;return {lat:40.73,lng:-73.98,zoom:12}}
 window.gm_authFailure=()=>notice('Google Maps could not authenticate this key. Check its API access and restrictions.');
 function googleLoad(key){if(window.google?.maps)return Promise.resolve();if(googlePromise)return googlePromise;googlePromise=new Promise((resolve,reject)=>{window.initGoogle=resolve;let s=document.createElement('script');s.src='https://maps.googleapis.com/maps/api/js?key='+encodeURIComponent(key)+'&callback=initGoogle&libraries=streetView&v=weekly';s.onerror=reject;document.head.append(s)});return googlePromise}
-function rangeForZoom(lat,zoom){return 40075016.686*Math.max(.05,Math.cos(lat*Math.PI/180))*((document.getElementById('map').clientHeight||600)/256)/(2*Math.tan(Math.PI/8))/2**zoom}
-function zoomForRange(lat,range){const base=40075016.686*Math.max(.05,Math.cos(lat*Math.PI/180))*((document.getElementById('map').clientHeight||600)/256)/(2*Math.tan(Math.PI/8));return Math.max(2,Math.min(24,Math.log2(base/Math.max(1,range))))}
-function currentCamera(){if(!map)return null;if(provider==='google'){const c=map.getCenter();return c?{lat:c.lat(),lng:c.lng(),zoom:map.getZoom()}:null}if(provider==='osm'||provider==='esri'){const c=map.getCenter();return c?{lat:c.lat,lng:c.lng,zoom:map.getZoom()}:null}if(provider==='google3d'){map.tilt=0;map.heading=0;const c=map.center;return c?{lat:c.lat,lng:c.lng,zoom:zoomForRange(c.lat,map.range)}:null}return null}
-function applyCamera(camera){if(!map||!camera)return;if(provider==='google')map.moveCamera({center:{lat:camera.lat,lng:camera.lng},zoom:camera.zoom});else if(provider==='google3d'){map.center={lat:camera.lat,lng:camera.lng,altitude:0};map.range=rangeForZoom(camera.lat,camera.zoom);map.tilt=0;map.heading=0}else if(provider==='osm'||provider==='esri')map.setView([camera.lat,camera.lng],camera.zoom,{animate:false})}
-async function setup(s){let wanted=s.google?(s.google3D?'google3d':'google'):s.osmSatellite?'esri':'osm';if(provider===wanted&&map)return;if(coverageLayer)coverageLayer.setMap(null);provider=wanted;layers=[];cursor=null;coordEditor=null;document.getElementById('map').innerHTML='';if(map?.remove)map.remove();map=null;
+function mapViewportHeight(target){return target?.getBoundingClientRect?.().height||document.getElementById('map').clientHeight||600;}
+function rangeForZoom(lat,zoom,height=mapViewportHeight(),fov=35){return 40075016.686*Math.max(.000001,Math.cos(lat*Math.PI/180))*(height/256)/(2*Math.tan(fov*Math.PI/360))/2**zoom;}
+function zoomForRange(lat,range,height=mapViewportHeight(),fov=35){return Math.log2(rangeForZoom(lat,0,height,fov)/Math.max(1,range));}
+let camera3DReference=null;
+function rangeForCamera(camera){
+ if(Number.isFinite(camera.range3D)&&camera.range3D>0){
+  return camera.range3D*mapViewportHeight()/(camera.height3D||mapViewportHeight());
+ }
+ return rangeForZoom(camera.lat,camera.zoom);
+}
+function satelliteCamera(target){
+ const c=target.getCenter();if(!c)return null;
+ const camera={lat:c.lat(),lng:c.lng(),zoom:target.getZoom()};
+ if(camera3DReference){
+  const ref=camera3DReference;
+  camera.range3D=ref.range3D*2**(ref.zoom-camera.zoom)*Math.cos(camera.lat*Math.PI/180)/Math.cos(ref.lat*Math.PI/180);
+  camera.height3D=ref.height3D;camera.fov3D=ref.fov3D;camera.altitude3D=ref.altitude3D;
+ }
+ return camera;
+}
+function capture3DCamera(target){
+ const c=target.center;if(!c)return null;
+ const height=mapViewportHeight(target),fov=target.fov||35;
+ return {lat:c.lat,lng:c.lng,zoom:zoomForRange(c.lat,target.range,height,fov),range3D:target.range,height3D:height,fov3D:fov,altitude3D:c.altitude||0};
+}
+function currentCamera(){
+ if(!map)return null;
+ if(provider==='google')return satelliteCamera(map);
+ if(provider==='osm'||provider==='esri'){const c=map.getCenter();return c?{lat:c.lat,lng:c.lng,zoom:map.getZoom()}:null;}
+ if(provider==='google3d'){const camera=capture3DCamera(map);if(camera)camera3DReference=camera;return camera;}
+ return null;
+}
+function applyCamera(camera){
+ if(!map||!camera)return;
+ if(provider==='google')map.moveCamera({center:{lat:camera.lat,lng:camera.lng},zoom:camera.zoom,tilt:0,heading:0});
+ else if(provider==='google3d'){activate3DCamera(map,camera).catch(()=>notice('Google Maps 3D could not resolve the terrain height.'));}
+ else map.setView([camera.lat,camera.lng],camera.zoom,{animate:false});
+}
+async function activate3DCamera(target,camera){
+ // A zero-duration fly skips Google's initial terrain-readiness wait. Use one
+ // minimal animation to resolve ground height, then restore the intended range.
+ target.fov=camera.fov3D||35;
+ target.mode=google3DLibrary.MapMode.HYBRID;
+ const range=rangeForCamera(camera);
+ let finish,timer;
+ const settled=new Promise(resolve=>{
+  finish=()=>{clearTimeout(timer);target.removeEventListener('gmp-animationend',finish);resolve()};
+  target.addEventListener('gmp-animationend',finish,{once:true});
+ });
+ try {
+  const animation=target.flyCameraTo({durationMillis:1,endCamera:{
+   center:{lat:camera.lat,lng:camera.lng,altitude:0},
+   altitudeMode:google3DLibrary.AltitudeMode.RELATIVE_TO_GROUND,
+   range,tilt:0,heading:0,fov:camera.fov3D||35
+  }});
+  // The API promise can remain pending while tiles are unavailable. Keep
+  // editing/rendering responsive rather than blocking the whole update queue.
+  timer=setTimeout(finish,4000);
+  await Promise.race([Promise.resolve(animation).then(()=>settled),settled]);
+  // Terrain refinement during the fly can change range. Keep the resolved
+  // terrain altitude and set the above-ground viewing distance exactly once.
+  if(target.isConnected!==false){
+   const center=target.center;
+   target.range=range;
+   // Explicit cameraPosition avoids a stale range value left by the fly's
+   // internal terrain refinement; at zero tilt this is height above ground.
+   target.cameraPosition={lat:center.lat,lng:center.lng,altitude:(center.altitude||0)+range};
+  }
+ } finally {clearTimeout(timer);target.removeEventListener('gmp-animationend',finish)}
+}
+async function setup(s){let wanted=s.google?(s.google3D?'google3d':'google'):s.osmSatellite?'esri':'osm';if(provider===wanted&&(wanted!=='google'||map?._gpxSatellite===!!s.googleSatellite))return;if(map?._gpxBasemap&&['osm','esri'].includes(provider)&&['osm','esri'].includes(wanted)){provider=wanted;map._gpxBasemap.setSatellite(wanted==='esri');return;}if(coverageLayer)coverageLayer.setMap(null);const revision=++setupRevision;layers.forEach(remove);layers=[];if(cursor){remove(cursor);cursor=null}disposeZoom();disposeZoom=()=>{};if(provider==='google'&&map)google.maps.event.clearInstanceListeners(map);if(map?.remove)map.remove();const oldContainer=document.getElementById('map');oldContainer.replaceWith(oldContainer.cloneNode(false));const container=document.getElementById('map');container.addEventListener('contextmenu',e=>e.preventDefault(),{capture:true});container.addEventListener('mousemove',previewPointer,{capture:true});container.addEventListener('mouseleave',endPathPreview);installPathDragging(container);provider=wanted;layers=[];cursor=null;coordEditor=null;map=null;
  const camera=savedCamera(s);
- if(wanted==='google3d'){if(!s.key){notice('Add your Google Maps demo key in Settings.');return}try{await googleLoad(s.key);google3DLibrary=await google.maps.importLibrary('maps3d');map=new google3DLibrary.Map3DElement({center:{lat:camera.lat,lng:camera.lng,altitude:0},range:rangeForZoom(camera.lat,camera.zoom),tilt:0,heading:0,mode:'HYBRID',gestureHandling:'greedy',defaultUIHidden:false});document.getElementById('map').append(map);installGoogle3DGestures(map);let cameraSaveTimer;const saveCamera=()=>{clearTimeout(cameraSaveTimer);cameraSaveTimer=setTimeout(()=>{const c=map?.center;if(c)send('camera',{lat:c.lat,lng:c.lng,zoom:zoomForRange(c.lat,map.range),google:true})},250)};map.addEventListener('gmp-centerchange',saveCamera);map.addEventListener('gmp-rangechange',saveCamera);map.addEventListener('gmp-click',e=>{if(e.position)click(e.position.lat,e.position.lng,false)});map.addEventListener('gmp-pointermove',e=>{if(draggingID&&e.position){const position={lat:e.position.lat,lng:e.position.lng};const record=pointMarkers.find(r=>r.point.id===draggingID);if(record)record.marker.position={...position,altitude:0};updateDraggedPath(draggingID,position)}});map.addEventListener('gmp-error',()=>notice('Google Maps 3D could not load for this API key or device.'));notice('')}catch(e){notice('Google Maps 3D could not load. Check your API key and connection.')}return}
- if(wanted==='google'){if(!s.key){notice('Add your Google Maps demo key in Settings.');return}try{await googleLoad(s.key);map=new google.maps.Map(document.getElementById('map'),{center:{lat:camera.lat,lng:camera.lng},zoom:camera.zoom,mapTypeId:!s.dashboard&&s.googleSatellite?'satellite':'roadmap',tilt:0,heading:0,maxZoom:24,renderingType:'RASTER',gestureHandling:'greedy',disableDoubleClickZoom:true,mapTypeControl:!s.dashboard,mapTypeControlOptions:{mapTypeIds:['roadmap','satellite'],style:google.maps.MapTypeControlStyle.DROPDOWN_MENU},rotateControl:false,tiltInteractionEnabled:false,headingInteractionEnabled:false,streetViewControl:true,fullscreenControl:false});installGooglePinch(map);coverageLayer=new google.maps.StreetViewCoverageLayer();map.addListener('click',e=>click(e.latLng.lat(),e.latLng.lng()));map.addListener('idle',()=>{const c=map.getCenter();if(c)send('camera',{lat:c.lat(),lng:c.lng(),zoom:map.getZoom(),google:true})});map.addListener('maptypeid_changed',()=>{if(!s.dashboard)send('mapType',{satellite:map.getMapTypeId()==='satellite'})});map.addListener('zoom_changed',scheduleMapStyle);map.addListener('projection_changed',scheduleMapStyle);notice('')}catch(e){notice('Google Maps could not load. Check your connection and API key.')}}
- else {map=new PreciseMap('map',{touchZoom:false,fadeAnimation:false,doubleClickZoom:false,maxZoom:24,zoomSnap:0,zoomDelta:0.25,scrollWheelZoom:false,zoomAnimation:true}).setView([camera.lat,camera.lng],camera.zoom);if(wanted==='esri'){const tile={maxNativeZoom:23,maxZoom:24};new RetainedTiles('https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{...tile,attribution:'Source: Esri, Vantor, Earthstar Geographics, and the GIS User Community'}).addTo(map);// Use native road detail instead of magnifying low-zoom roads and labels.
-const roads=new RetainedTiles('https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}',{...tile,attribution:'Sources: Esri, HERE, Garmin, © OpenStreetMap contributors, and the GIS community'}).addTo(map);
-const updateRoadOpacity=()=>{
- const container=roads.getContainer();if(container)container.style.transition='opacity 160ms ease-out';
- roads.setOpacity(map.getZoom()<18?1:0);
-};
-map.on('zoom zoomend',updateRoadOpacity);updateRoadOpacity();new RetainedTiles('https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',{...tile,attribution:'Sources: Esri, Garmin, HERE, © OpenStreetMap contributors, and the GIS user community'}).addTo(map)}else new RetainedTiles('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap contributors',maxNativeZoom:19,maxZoom:24}).addTo(map);map.getContainer().addEventListener('contextmenu',e=>e.preventDefault());map.on('click',e=>click(e.latlng.lat,e.latlng.lng));map.on('moveend',()=>{const c=map.getCenter();send('camera',{lat:c.lat,lng:c.lng,zoom:map.getZoom(),google:false})});installSmoothWheel(map);map.on('zoom move zoomend moveend',scheduleMapStyle);notice('')}
+ if(wanted==='google3d'){if(!s.key){notice('Add your Google Maps demo key in Settings.');return}try{await googleLoad(s.key);google3DLibrary=await google.maps.importLibrary('maps3d');if(revision!==setupRevision)return;map=new google3DLibrary.Map3DElement({center:{lat:camera.lat,lng:camera.lng,altitude:0},range:rangeForCamera(camera),tilt:0,heading:0,fov:camera.fov3D||35,qualityMode:google3DLibrary.QualityMode.PERFORMANCE,gestureHandling:google3DLibrary.GestureHandling.GREEDY,defaultUIHidden:true});map.addEventListener('gmp-error',()=>notice('Google Maps 3D failed to initialize. Check this key’s 3D access, quota, and device support. No automatic retry will be made.'));document.getElementById('map').append(map);const target=map;await new Promise(resolve=>requestAnimationFrame(resolve));if(revision!==setupRevision)return;await activate3DCamera(target,camera);installGoogle3DGestures(map);installGoogle3DAnchorClicks(map);map.addEventListener('gmp-steadychange',e=>{if(e.isSteady&&map===e.currentTarget)notice('')});let cameraSaveTimer;const disposeGestures=disposeZoom;disposeZoom=()=>{disposeGestures();clearTimeout(cameraSaveTimer)};const saveCamera=()=>{clearTimeout(cameraSaveTimer);cameraSaveTimer=setTimeout(()=>{if(map!==target)return;const camera=capture3DCamera(target);if(camera)send('camera',{...camera,google:true})},250)};map.addEventListener('gmp-centerchange',saveCamera);map.addEventListener('gmp-rangechange',saveCamera);notice('Loading Google Maps 3D…')}catch(e){notice('Google Maps 3D could not load. Check your key’s access, quota, and connection. No automatic retry will be made.')}return}
+ // Raster road maps draw flat building footprints; zero tilt alone does not
+ // remove the vector renderer's perspective-extruded buildings. Fractional
+ // zoom remains enabled explicitly for our continuous wheel/pinch camera.
+ if(wanted==='google'){if(!s.key){notice('Add your Google Maps demo key in Settings.');return}try{await googleLoad(s.key);if(revision!==setupRevision)return;map=new google.maps.Map(document.getElementById('map'),{center:{lat:camera.lat,lng:camera.lng},zoom:camera.zoom,mapTypeId:s.googleSatellite?'hybrid':'roadmap',tilt:0,heading:0,maxZoom:24,renderingType:s.googleSatellite?'VECTOR':'RASTER',...(s.googleSatellite?{mapId:'DEMO_MAP_ID'}:{styles:[{featureType:'landscape.man_made',elementType:'geometry',stylers:[{visibility:'off'}]}]}),isFractionalZoomEnabled:true,scrollwheel:false,gestureHandling:'greedy',disableDoubleClickZoom:true,mapTypeControl:false,rotateControl:false,tiltInteractionEnabled:false,headingInteractionEnabled:false,streetViewControl:true,fullscreenControl:false});map._gpxSatellite=!!s.googleSatellite;const overlay=new google.maps.OverlayView();overlay.onAdd=()=>{};overlay.draw=()=>{};overlay.onRemove=()=>{};overlay.setMap(map);map._gpxOverlay=overlay;installGooglePinch(map);coverageLayer=new google.maps.StreetViewCoverageLayer();installGoogleAnchorClicks(map);map.addListener('idle',()=>{const camera=satelliteCamera(map);if(camera)send('camera',{...camera,google:true})});map.addListener('maptypeid_changed',()=>{map.setTilt(0);map.setHeading(0);send('mapType',{satellite:['satellite','hybrid'].includes(map.getMapTypeId())})});map.addListener('zoom_changed',scheduleMapStyle);map.addListener('projection_changed',scheduleMapStyle);notice('')}catch(e){notice('Google Maps could not load. Check your connection and API key.')}}
+ else {map=new PreciseMap('map',{touchZoom:false,fadeAnimation:false,doubleClickZoom:false,minZoom:1,maxZoom:24,zoomSnap:0,zoomDelta:0.25,scrollWheelZoom:false,zoomAnimation:false}).setView([camera.lat,camera.lng],camera.zoom);
+ installGPUBasemap(map,wanted==='esri');
+ map.getContainer().addEventListener('contextmenu',e=>e.preventDefault());map.on('click',e=>click(e.latlng.lat,e.latlng.lng));map.on('moveend',()=>{const c=map.getCenter();send('camera',{lat:c.lat,lng:c.lng,zoom:map.getZoom(),google:false})});installSmoothWheel(map);map.on('zoom move zoomend moveend',scheduleMapStyle);notice('')}
 }
 let clickTimer,lineClickTimer,lineLastClick=0,lockedPoint=null,lastMapClick=0;function click(lat,lng){if(state.dashboard){send('select',{id:''});return}const now=performance.now(),double=now-lastMapClick<400;lastMapClick=now;clearTimeout(clickTimer);if(double){lastMapClick=0;send('add',{lat,lng})}else clickTimer=setTimeout(()=>{lastMapClick=0},400)}
 function remove(l){if(provider==='google')l.setMap(null);else if(provider==='google3d')l.remove();else map.removeLayer(l)}
-function line(points,color,width){let coords=points.map(p=>({lat:p.lat,lng:p.lng}));let l=provider==='google'?new google.maps.Polyline({map,path:coords,strokeColor:color,strokeWeight:width,strokeOpacity:1}):provider==='google3d'?new google3DLibrary.Polyline3DInteractiveElement({path:coords,strokeColor:color,strokeWidth:Math.max(5,width*1.7),outerColor:'#ffffff',outerWidth:0.35,altitudeMode:'CLAMP_TO_GROUND',drawsOccludedSegments:true}):L.polyline(points.map(p=>[p.lat,p.lng]),{renderer:new LiveTrackRenderer(),color,weight:width,lineCap:'round'}).addTo(map);if(provider==='google3d'){l.style.cursor='pointer';map.append(l)}layers.push(l);return l}
+function line(points,color,width){let coords=points.map(p=>({lat:p.lat,lng:p.lng}));let l=provider==='google'?new google.maps.Polyline({map,path:coords,strokeColor:color,strokeWeight:width,strokeOpacity:1}):provider==='google3d'?screenLine3D(points,color,width):L.polyline(points.map(p=>[p.lat,p.lng]),{renderer:new LiveTrackRenderer(),color,weight:width,lineCap:'round'}).addTo(map);if(provider==='google3d'&&!l._screenLine){l.style.cursor='pointer';map.append(l)}layers.push(l);return l}
 function lineHitArea(points,width,multiplier=9){if(provider==='google3d')return null;const coords=points.map(p=>({lat:p.lat,lng:p.lng}));let hit=provider==='google'?new google.maps.Polyline({map,path:coords,strokeColor:routeBlue,strokeWeight:width*multiplier,strokeOpacity:0.01,zIndex:1000}):L.polyline(points.map(p=>[p.lat,p.lng]),{renderer:new LiveTrackRenderer(),color:routeBlue,weight:width*multiplier,opacity:0.01,interactive:true,bubblingMouseEvents:false,lineCap:'round'}).addTo(map);layers.push(hit);return hit}
 function event(l,name,fn){if(provider==='google')l.addListener(name,fn);else if(provider==='google3d'){const eventName={click:'gmp-click',mousemove:'gmp-pointermove',mouseout:'gmp-pointerout',mouseover:'gmp-pointerover'}[name];if(eventName)l.addEventListener(eventName,e=>{const p=e.position;fn(p?{position:p,latLng:{lat:()=>p.lat,lng:()=>p.lng}}:e)})}else l.on(name,fn)}
 function coord(e){return provider==='google'?{lat:e.latLng.lat(),lng:e.latLng.lng()}:provider==='google3d'?{lat:e.position.lat,lng:e.position.lng}:{lat:e.latlng.lat,lng:e.latlng.lng}}
@@ -84,14 +120,12 @@ function previewPointer(e){
         const ll=projection.fromPointToLatLng(new google.maps.Point(world.x+(e.clientX-rect.left-rect.width/2)/scale,world.y+(e.clientY-rect.top-rect.height/2)/scale));
         c={lat:ll.lat(),lng:ll.lng()};
         project=p=>{const q=projection.fromLatLngToPoint(new google.maps.LatLng(p.lat,p.lng));return {x:q.x*scale,y:q.y*scale}};
-    }else return;
+    }else if(provider==='google3d'){const p=nearestScreenPath3D(e.clientX,e.clientY);if(!p){if(pathHover&&!creatorLine?.nativeHoverActive)endPathPreview();return}pathHover=true;window.cursorAt(p);send('preview',p);return;}else return;
     const p=nearest(state.points||[],c),a=project(c),b=p&&project(p);
     if(!p||Math.hypot(a.x-b.x,a.y-b.y)>routeWidth()*9/2){if(pathHover)endPathPreview();return}
     pathHover=true;setMapPathCursor(true);window.cursorAt(p);send('preview',p);
 }
-document.getElementById('map').addEventListener('mousemove',previewPointer,{capture:true});
-document.getElementById('map').addEventListener('mouseleave',endPathPreview);
-document.addEventListener('keydown',e=>{if(e.key==='Escape'){lockedPoint=null;window.cursorAt(null,true);send('escape')}else if(e.ctrlKey&&!e.metaKey&&!e.shiftKey&&e.key.toLowerCase()==='z'){e.preventDefault();send(e.altKey?'redo':'undo')}},true);
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){lockedPoint=null;window.cursorAt(null,true);send('escape')}else if(e.ctrlKey&&!e.metaKey&&!e.altKey&&e.key.toLowerCase()==='z'){e.preventDefault();if(e.target?.matches?.('input,textarea,[contenteditable=true]'))document.execCommand(e.shiftKey?'redo':'undo');else send(e.shiftKey?'redo':'undo')}},true);
 
 const startSVG = '<svg class="endpoint" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 32 32"><circle cx="16" cy="16" r="13" fill="#19a35f" stroke="white" stroke-width="3"/></svg>';
 const manualSVG = '<svg class="endpoint" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 32 32"><circle cx="16" cy="16" r="13" fill="white" stroke="#2878d7" stroke-width="3"/></svg>';
@@ -101,11 +135,34 @@ const routeBlue='#2878d7';
 let pointMarkers=[],styleFrame=0;
 function routeWidth(){return 3.5}
 function scheduleMapStyle(){if(!styleFrame)styleFrame=requestAnimationFrame(()=>{styleFrame=0;applyMapStyle()})}
+function styleDashboardLines(s=state){
+ for(const [id,line] of Object.entries(dashboardLines)){
+  const hovered=id===s.hovered;
+  const color=hovered?'#ff8a1f':id===s.selected?'#1d65bd':routeBlue;
+  const width=routeWidth()+(hovered?1.5:0);
+  if(provider==='google')line.setOptions({strokeColor:color,strokeWeight:width,zIndex:hovered?20:id===s.selected?10:0});
+  else if(provider==='google3d'){line.strokeColor=color;line.strokeWidth=width;}
+  else line.setStyle({color,weight:width});
+ }
+}
+function setDashboardHover(id){
+ if(state.hovered===id)return;
+ state={...state,hovered:id};
+ styleDashboardLines();
+ send('hover',{id});
+}
+function syncCoverage(s){
+ if(!coverageLayer)return;
+ const target=s.dashboard&&s.coverage&&provider==='google'?map:null;
+ // Reattaching the same coverage overlay forces Google's coverage tiles to reload.
+ if(coverageLayer.getMap()!==target)coverageLayer.setMap(target);
+}
 function applyMapStyle(){
     if(!map)return;
     if(provider==='google3d')return;
     const width=routeWidth();
-    for(const l of [creatorLine,...Object.values(dashboardLines)]){
+    styleDashboardLines();
+    for(const l of [creatorLine]){
         if(!l)continue;
         if(provider==='google')l.setOptions({strokeWeight:width});else l.setStyle({weight:width});
     }
@@ -142,7 +199,16 @@ function applyMapStyle(){
         }
     }
 }
+// Native macOS pinches use the same handlers and sensitivity as the dashboard.
+window.nativeMapPinch=function(type,scale,clientX,clientY){
+ if(!map)return;
+ const container=provider==='google'?map.getDiv():provider==='google3d'?map:map.getContainer();
+ const event=new Event(type,{bubbles:true,cancelable:true});
+ Object.assign(event,{scale,clientX,clientY});
+ container.dispatchEvent(event);
+};
 function installSmoothWheel(target){
+disposeZoom=()=>{cancelAnimationFrame(zoomFrame);clearTimeout(zoomIdleTimer);};
 let zoomFrame=0,targetZoom=null,zoomAnchor=null,anchorLatLng=null,zoomIdleTimer=0,zoomGesture=false,nativePinchActive=false,pinchStartZoom=0;
 function finishZoomGesture(){
  clearTimeout(zoomIdleTimer);
@@ -165,7 +231,7 @@ target.getContainer().addEventListener('wheel',e=>{
  zoomAnchor=target.mouseEventToContainerPoint(e);
  anchorLatLng=target.containerPointToLatLng(zoomAnchor);
  const delta=e.deltaY*(e.deltaMode===1?16:e.deltaMode===2?target.getSize().y:1);
- targetZoom=Math.max(target.getMinZoom(),Math.min(24,(targetZoom??target.getZoom())-delta/(e.ctrlKey?30:240)));
+ targetZoom=Math.max(target.getMinZoom(),Math.min(target.getMaxZoom(),(targetZoom??target.getZoom())-delta/(e.ctrlKey?30:240)));
  if(!zoomFrame)zoomFrame=requestAnimationFrame(smoothZoom);
  clearTimeout(zoomIdleTimer);zoomIdleTimer=setTimeout(()=>{if(zoomFrame){cancelAnimationFrame(zoomFrame);smoothZoom();}finishZoomGesture();},70);
 },{passive:false});
@@ -181,7 +247,7 @@ target.getContainer().addEventListener('gesturestart',event=>{
 },{passive:false});
 target.getContainer().addEventListener('gesturechange',event=>{
  event.preventDefault();if(!nativePinchActive||!(event.scale>0))return;
- targetZoom=Math.max(target.getMinZoom(),Math.min(24,pinchStartZoom+Math.log2(event.scale)*3));
+ targetZoom=Math.max(target.getMinZoom(),Math.min(target.getMaxZoom(),pinchStartZoom+Math.log2(event.scale)*3));
  if(!zoomFrame)zoomFrame=requestAnimationFrame(smoothZoom);
 },{passive:false});
 target.getContainer().addEventListener('gestureend',event=>{
@@ -193,47 +259,383 @@ target.getContainer().addEventListener('mousedown',stopSmoothZoom);
 // Use the same stronger, anchor-preserving pinch response for both Google Maps
 // instances. A 2× finger spread changes the zoom by three levels, matching OSM.
 function installGooglePinch(target){
- const container=target.getDiv();let active=false,startZoom=0,anchorPixel=null,anchorPoint=null,frame=0,zoom=null;
+ const container=target.getDiv();let active=false,startZoom=0,anchorPixel=null,anchorPoint=null,frame=0,zoom=null,idleTimer=0;
+ disposeZoom=()=>{cancelAnimationFrame(frame);clearTimeout(idleTimer);};
+ const clamp=value=>Math.max(target.get('minZoom')??0,Math.min(target.get('maxZoom')??24,value));
  function camera(){
-  frame=0;if(!active||zoom===null)return;
-  const projection=target.getProjection();if(!projection||!anchorPoint)return;
-  const scale=256*2**zoom,size=container.getBoundingClientRect();
+  frame=0;if(zoom===null||!anchorPoint)return;
+  const projection=target.getProjection();if(!projection)return;
+  const previousZoom=target.getZoom();
+  if(zoom===previousZoom)return;
+  // Google can cap the request at the available imagery's zoom limit.
+  target.setZoom(zoom);
+  const appliedZoom=target.getZoom();
+  if(appliedZoom===previousZoom)return;
+  const scale=2**appliedZoom,size=container.getBoundingClientRect();
   const centerPoint={x:anchorPoint.x-(anchorPixel.x-size.width/2)/scale,y:anchorPoint.y-(anchorPixel.y-size.height/2)/scale};
-  target.moveCamera({center:projection.fromPointToLatLng(centerPoint),zoom});
+  target.moveCamera({center:projection.fromPointToLatLng(centerPoint),tilt:0,heading:0});
  }
+ function flush(){if(frame){cancelAnimationFrame(frame);camera();}}
  function anchor(event){
-  const rect=container.getBoundingClientRect();anchorPixel={x:(event.clientX||rect.left+rect.width/2)-rect.left,y:(event.clientY||rect.top+rect.height/2)-rect.top};
-  const projection=target.getProjection();const center=target.getCenter();if(!projection||!center)return;
-  const centerPoint=projection.fromLatLngToPoint(center),scale=256*2**target.getZoom();
-  anchorPoint={x:centerPoint.x+(anchorPixel.x-rect.width/2)/scale,y:centerPoint.y+(anchorPixel.y-rect.height/2)/scale};
+  const rect=container.getBoundingClientRect();
+  anchorPixel={x:(Number.isFinite(event.clientX)?event.clientX:rect.left+rect.width/2)-rect.left,y:(Number.isFinite(event.clientY)?event.clientY:rect.top+rect.height/2)-rect.top};
+  const projection=target.getProjection(),center=target.getCenter();anchorPoint=null;if(!projection||!center)return;
+  const point=projection.fromLatLngToPoint(center),scale=2**target.getZoom();
+  anchorPoint={x:point.x+(anchorPixel.x-rect.width/2)/scale,y:point.y+(anchorPixel.y-rect.height/2)/scale};
  }
+ const consume=event=>{event.preventDefault();event.stopImmediatePropagation();};
+ container.addEventListener('wheel',event=>{
+  consume(event);if(active)return;
+  // Commit the previous cursor anchor before taking a new one. Accumulate all
+  // deltas, then draw once per frame, with the same sensitivity as Leaflet.
+  const rect=container.getBoundingClientRect();
+  const moved=!anchorPixel||anchorPixel.x!==event.clientX-rect.left||anchorPixel.y!==event.clientY-rect.top;
+  if(!frame||moved){flush();anchor(event);}if(!anchorPoint)return;
+  const delta=event.deltaY*(event.deltaMode===1?16:event.deltaMode===2?container.clientHeight:1);
+  zoom=clamp((frame?zoom:target.getZoom())-delta/(event.ctrlKey?30:240));
+  if(!frame)frame=requestAnimationFrame(camera);
+  clearTimeout(idleTimer);idleTimer=setTimeout(()=>{flush();zoom=null;},70);
+ },{capture:true,passive:false});
  container.addEventListener('gesturestart',event=>{
-  event.preventDefault();event.stopImmediatePropagation();cancelAnimationFrame(frame);active=true;startZoom=target.getZoom();anchor(event);
+  consume(event);flush();clearTimeout(idleTimer);zoom=null;active=true;startZoom=target.getZoom();anchor(event);
  },{capture:true,passive:false});
  container.addEventListener('gesturechange',event=>{
-  if(!active||!(event.scale>0))return;event.preventDefault();event.stopImmediatePropagation();
-  zoom=Math.max(target.get('minZoom')||0,Math.min(target.get('maxZoom')||24,startZoom+Math.log2(event.scale)*3));
+  if(!active||!(event.scale>0))return;consume(event);
+  if(!anchorPoint)anchor(event);
+  zoom=clamp(startZoom+Math.log2(event.scale)*3);
   if(!frame)frame=requestAnimationFrame(camera);
  },{capture:true,passive:false});
  container.addEventListener('gestureend',event=>{
-  if(!active)return;event.preventDefault();event.stopImmediatePropagation();if(frame){cancelAnimationFrame(frame);camera()}active=false;zoom=null;
+  if(!active)return;consume(event);flush();active=false;zoom=null;
  },{capture:true,passive:false});
 }
+// Capture a route drag before the basemap starts panning. Commit only once,
+// so insertion and movement share a single history entry.
+function pointerGround(e){
+ if(provider==='google3d')return groundAt3DPixel(map,e.clientX,e.clientY);
+ if(provider==='google'){
+  const projection=map.getProjection(),center=map.getCenter(),r=map.getDiv().getBoundingClientRect();if(!projection||!center)return null;
+  const c=projection.fromLatLngToPoint(center),scale=2**map.getZoom();
+  const p=projection.fromPointToLatLng(new google.maps.Point(c.x+(e.clientX-r.left-r.width/2)/scale,c.y+(e.clientY-r.top-r.height/2)/scale));return {lat:p.lat(),lng:p.lng()};
+ }
+ const r=map.getContainer().getBoundingClientRect(),p=map.containerPointToLatLng([e.clientX-r.left,e.clientY-r.top]);return {lat:p.lat,lng:p.lng};
+}
+// Google's shadow DOM and optimized markers can retarget events to the map.
+// Resolve anchors by their visible screen geometry before testing the route.
+function anchorAtScreen(x,y){
+ let best=null,distance=18;
+ for(const record of pointMarkers){
+  if(!record.point.manual||record.marker.style?.visibility==='hidden')continue;
+  let pixel;
+  if(provider==='google'){
+   const overlayProjection=map._gpxOverlay?.getProjection();
+   if(overlayProjection){const p=overlayProjection.fromLatLngToContainerPixel(new google.maps.LatLng(record.point.lat,record.point.lng)),r=map.getDiv().getBoundingClientRect();pixel={x:r.left+p.x,y:r.top+p.y}}
+   const projection=map.getProjection(),center=map.getCenter();if(!projection||!center)continue;
+   const a=projection.fromLatLngToPoint(new google.maps.LatLng(record.point.lat,record.point.lng)),b=projection.fromLatLngToPoint(center),r=map.getDiv().getBoundingClientRect(),scale=2**map.getZoom();
+   let dx=a.x-b.x;if(dx>128)dx-=256;if(dx< -128)dx+=256;
+   pixel=pixel||{x:r.left+r.width/2+dx*scale,y:r.top+r.height/2+(a.y-b.y)*scale};
+  }else{
+   const element=provider==='google3d'?(record.marker.firstElementChild||record.marker):record.marker.getElement?.(),r=element?.getBoundingClientRect();
+   if(!r?.width||!r.height)continue;pixel={x:r.left+r.width/2,y:r.top+r.height/2};
+  }
+  const d=Math.hypot(pixel.x-x,pixel.y-y);if(d<=distance){best=record;distance=d}
+ }
+ return best;
+}
+window.nativeMapContextMenu=(x,y)=>{
+ if(provider!=='google3d'||state.dashboard)return;
+ const record=anchorAtScreen(x,y);if(record)send('delete',{id:record.point.id});
+};
+window.addEventListener('contextmenu',e=>{e.preventDefault();if(provider==='google3d'){e.stopImmediatePropagation();window.nativeMapContextMenu(e.clientX,e.clientY)}},true);
+function installPathDragging(container){
+ container.addEventListener('pointerdown',e=>{
+  if(e.button!==0||e.shiftKey||e.metaKey||state.dashboard||draggingID)return;
+  const existing=anchorAtScreen(e.clientX,e.clientY);
+  if(existing){if(provider==='google3d'||provider==='google')existing.marker._beginAnchorDrag?.(e);return}
+  if(e.composedPath().some(n=>n.tagName?.toLowerCase().includes('marker')||n.classList?.contains('leaflet-marker-icon')))return;
+  const hit=pointerGround(e);if(!hit)return;
+  let along=provider==='google3d'?nearestScreenPath3D(e.clientX,e.clientY):nearest(state.points||[],hit);
+  if(!along)return;
+  if(provider!=='google3d'){
+   let pixel;if(provider==='google'){const pr=map.getProjection(),a=pr.fromLatLngToPoint(new google.maps.LatLng(along.lat,along.lng)),b=pr.fromLatLngToPoint(new google.maps.LatLng(hit.lat,hit.lng)),scale=2**map.getZoom();pixel=Math.hypot(a.x-b.x,a.y-b.y)*scale}
+   else pixel=map.latLngToContainerPoint([along.lat,along.lng]).distanceTo(map.latLngToContainerPoint([hit.lat,hit.lng]));
+   if(pixel>routeWidth()*4.5)return;
+  }
+  // Leave stationary clicks available to preview and double-click handlers.
+  let moved=false,last={lat:along.lat,lng:along.lng},temp=null;
+  const originalPoints=state.points.map(p=>({...p}));
+  const googleDraggable=provider==='google'?map.get('draggable'):null;
+  const leafletDragging=(provider==='osm'||provider==='esri')&&map.dragging.enabled();
+  if(provider==='google')map.setOptions({draggable:false});
+  else if(leafletDragging)map.dragging.disable();
+  const blockMouse=ev=>{ev.preventDefault();ev.stopImmediatePropagation()};
+  container.addEventListener('mousedown',blockMouse,true);
+  document.addEventListener('mousemove',blockMouse,true);
+  const restorePan=()=>{container.removeEventListener('mousedown',blockMouse,true);document.removeEventListener('mousemove',blockMouse,true);if(provider==='google')map.setOptions({draggable:googleDraggable!==false});else if(leafletDragging)map.dragging.enable()};
+  const move=ev=>{if(Math.hypot(ev.clientX-e.clientX,ev.clientY-e.clientY)<3&&!moved)return;if(!moved){temp={...along,id:'__insert__',manual:true};state.points.push(temp);state.points.sort((a,b)=>a.time-b.time);marker(temp,1,state.points.length)}moved=true;draggingID='__insert__';const location=pointerGround(ev);if(location){last=provider==='google3d'?{lat:along.lat+location.lat-hit.lat,lng:((along.lng+location.lng-hit.lng+540)%360)-180}:location}updateDraggedPath('__insert__',last);ev.preventDefault();ev.stopImmediatePropagation();window.cursorAt(last,true)};
+  const end=ev=>{restorePan();document.removeEventListener('pointermove',move,true);document.removeEventListener('pointerup',end,true);document.removeEventListener('pointercancel',cancel,true);if(moved){ev.preventDefault();ev.stopImmediatePropagation();draggingID=null;state.points=state.points.filter(p=>p.id!=='__insert__');pendingState=null;renderSignature='';clearTimeout(lineClickTimer);send('insertDragged',{...last,time:along.time})}};
+  const cancel=ev=>{const next=pendingState||{...state,points:originalPoints};moved=false;draggingID=null;pendingState=null;end(ev);renderSignature='';window.update(next)};
+  e.stopImmediatePropagation();
+  document.addEventListener('pointermove',move,true);document.addEventListener('pointerup',end,true);document.addEventListener('pointercancel',cancel,true);
+ },true);
+}
+function installGoogleAnchorClicks(target){
+ target.addListener('click',()=>{if(state.dashboard)send('select',{id:''})});
+ // Google may emit only one click before dblclick. Listen for dblclick itself
+ // instead of assuming it always sends two single-click events.
+ target.addListener('dblclick',e=>{
+  if(state.dashboard||!e.latLng)return;
+  e.stop?.();e.domEvent?.preventDefault();
+  clearTimeout(clickTimer);lastMapClick=0;
+  send('add',{lat:e.latLng.lat(),lng:e.latLng.lng()});
+ });
+}
+function cameraBasis3D(target){
+ const r=target.getBoundingClientRect(),c=target.center;if(!c||!r.height)return null;
+ const tilt=(target.tilt||0)*Math.PI/180,heading=(target.heading||0)*Math.PI/180;
+ const st=Math.sin(tilt),ct=Math.cos(tilt),sh=Math.sin(heading),ch=Math.cos(heading),range=target.range;
+ return {rect:r,center:c,focal:r.height/(2*Math.tan((target.fov||35)*Math.PI/360)),
+  camera:[-range*st*sh,-range*st*ch,range*ct],forward:[st*sh,st*ch,-ct],right:[ch,-sh,0],up:[ct*sh,ct*ch,st]};
+}
+function groundAt3DPixel(target,clientX,clientY){
+ const b=cameraBasis3D(target);if(!b)return null;
+ const x=(clientX-b.rect.left-b.rect.width/2)/b.focal,y=(b.rect.top+b.rect.height/2-clientY)/b.focal;
+ const ray=b.forward.map((v,i)=>v+x*b.right[i]+y*b.up[i]);
+ if(ray[2]>=-0.000001)return null; // The cursor is above the horizon.
+ const distance=-b.camera[2]/ray[2];if(distance<0)return null;
+ const east=b.camera[0]+distance*ray[0],north=b.camera[1]+distance*ray[1];
+ const lat=b.center.lat+north/6378137*180/Math.PI;
+ const lng=b.center.lng+east/(6378137*Math.max(.000001,Math.cos(b.center.lat*Math.PI/180)))*180/Math.PI;
+ if(Math.abs(lat)>85)return null;
+ return {lat,lng:((lng+540)%360)-180};
+}
+function pixelFor3DGround(target,point){
+ const b=cameraBasis3D(target);if(!b)return null;
+ let dl=point.lng-b.center.lng;if(dl>180)dl-=360;if(dl< -180)dl+=360;
+ const v=[dl*Math.PI/180*6378137*Math.cos(b.center.lat*Math.PI/180)-b.camera[0],(point.lat-b.center.lat)*Math.PI/180*6378137-b.camera[1],-b.camera[2]];
+ const dot=a=>a.reduce((sum,value,i)=>sum+value*v[i],0),depth=dot(b.forward);
+ if(depth<=0)return null;
+ return {x:b.rect.left+b.rect.width/2+b.focal*dot(b.right)/depth,y:b.rect.top+b.rect.height/2-b.focal*dot(b.up)/depth,depth};
+}
+function installGoogle3DAnchorClicks(target){
+ let pending=null,lastAction=-Infinity,clickCount=0,lastHit=null;
+ target.addEventListener('pointerdown',e=>{if(e.button===0)clickCount=e.detail||1},{capture:true});
+ function commit(position,x,y){
+  const now=performance.now();if(state.dashboard||now-lastAction<350||!position)return;
+  lastAction=now;clearTimeout(lineClickTimer);lineLastClick=0;
+  const along=nearestScreenPath3D(x,y);
+  if(along)send('insert',along);else send('add',{lat:position.lat,lng:position.lng});
+ }
+ target.addEventListener('gmp-click',e=>{
+  if(e.target!==target||!e.position)return;
+  e.preventDefault();lastHit={position:e.position,x:lastPointer3D.x,y:lastPointer3D.y,time:performance.now()};
+  if(pending){const p=pending;pending=null;commit(e.position,p.x,p.y)}
+  else if(clickCount===2)commit(e.position,lastPointer3D.x,lastPointer3D.y);
+  else {const along=nearestScreenPath3D(lastPointer3D.x,lastPointer3D.y);if(along){clearTimeout(lineClickTimer);lineClickTimer=setTimeout(()=>{if(!state.focusedAnchorID){lockedPoint=along;window.cursorAt(along,true);send('lockPreview',along)}},400)}}
+ });
+ function doubleClick(x,y,waitForHit=false){
+  if(state.dashboard||performance.now()-lastAction<350)return;
+  for(const record of pointMarkers){
+   if(!record.point.manual)continue;
+   const rect=record.marker.getBoundingClientRect?.();
+   if(rect?.width&&Math.hypot(rect.left+rect.width/2-x,rect.top+rect.height/2-y)<14){lastAction=performance.now();showCoordinateEditor(record.point);return;}
+  }
+  if(!waitForHit&&lastHit&&performance.now()-lastHit.time<150&&Math.hypot(lastHit.x-x,lastHit.y-y)<3){commit(lastHit.position,x,y);return;}
+  commit(groundAt3DPixel(target,x,y),x,y);
+ }
+ window.nativeMapDoubleClick=(x,y)=>doubleClick(x,y,true);
+ target.addEventListener('dblclick',e=>{e.preventDefault();e.stopImmediatePropagation();if(!pending)doubleClick(e.clientX,e.clientY)},{capture:true,passive:false});
+}
+let lastPointer3D={x:0,y:0};
+function nearestScreenPath3D(x,y){
+ const l=creatorLine;if(!l?._screenLine)return null;
+ const native=l.nativeHitAt?.(x,y);if(native)return native;
+ let best=null,distance=routeWidth()*9/2;
+ const points=l.screenPoints();
+ for(let i=1;i<points.length;i++){
+  const a=points[i-1],b=points[i];if(!a||!b)continue;
+  const dx=b.x-a.x,dy=b.y-a.y,f=Math.max(0,Math.min(1,((x-a.x)*dx+(y-a.y)*dy)/(dx*dx+dy*dy||1)));
+  const d=Math.hypot(x-a.x-f*dx,y-a.y-f*dy);
+  if(d<=distance){const da=a.depth||1,db=b.depth||1,t=f*da/((1-f)*db+f*da);distance=d;best={lat:a.point.lat+t*(b.point.lat-a.point.lat),lng:a.point.lng+t*(b.point.lng-a.point.lng),time:a.point.time+t*(b.point.time-a.point.time)}}
+ }
+ return best;
+}
+function screenCursor3D(position){
+ // Let the terrain renderer project the preview dot too; it must not depend
+ // on the visibility of either endpoint of the hovered segment.
+ const marker=new google3DLibrary.MarkerElement({position:{lat:position.lat,lng:position.lng,altitude:0},altitudeMode:'CLAMP_TO_GROUND',collisionBehavior:'REQUIRED',anchorLeft:'-50%',anchorTop:'-50%'});
+ const dot=document.createElement('span');dot.className='preview-dot';dot.style.display='block';
+ marker.style.pointerEvents='none';dot.style.pointerEvents='none';marker.append(dot);map.append(marker);return marker;
+}
+function simplify3DPath(points,target,limit=1000){
+ if(points.length<=limit)return points;
+ const scale=Math.cos((target.center?.lat||0)*Math.PI/180),meters=111320;
+ let tolerance=Math.max(.01,2*target.range*Math.tan((target.fov||35)*Math.PI/360)/mapViewportHeight(target)*.35);
+ for(;;tolerance*=2){
+  const keep=new Set([0,points.length-1]),stack=[[0,points.length-1]];
+  while(stack.length){
+   const [start,end]=stack.pop(),a=points[start],b=points[end],dx=(b.lng-a.lng)*scale*meters,dy=(b.lat-a.lat)*meters;
+   let best=tolerance*tolerance,index=-1;
+   for(let i=start+1;i<end;i++){const x=(points[i].lng-a.lng)*scale*meters,y=(points[i].lat-a.lat)*meters,f=Math.max(0,Math.min(1,(x*dx+y*dy)/(dx*dx+dy*dy||1))),d=(x-f*dx)**2+(y-f*dy)**2;if(d>best){best=d;index=i}}
+   if(index!==-1){keep.add(index);stack.push([start,index],[index,end])}
+  }
+  if(keep.size<=limit)return [...keep].sort((a,b)=>a-b).map(i=>points[i]);
+ }
+}
+function screenLine3D(points,color,width){
+ const target=map,container=document.getElementById('map');
+ // Geographic geometry belongs to Google's renderer. HTML marker positions
+ // can be clamped/stale offscreen and must never determine the visible route.
+ const nativeLine=new google3DLibrary.Polyline3DElement({altitudeMode:'CLAMP_TO_GROUND',drawsOccludedSegments:true,geodesic:false,strokeColor:color,strokeWidth:width});
+ target.append(nativeLine);
+ // Native hit geometry follows the rendered path even when both endpoint
+ // HTML probes are culled or disagree with the ground-clamped line.
+ const hitLine=new google3DLibrary.Polyline3DInteractiveElement({altitudeMode:'CLAMP_TO_GROUND',drawsOccludedSegments:true,geodesic:false,strokeColor:'rgba(22,139,255,0.001)',strokeWidth:width*9});
+ target.append(hitLine);
+ let nativeHit=null;
+ const nativeMove=e=>{
+  if(removed||map!==target||provider!=='google3d'||!e.position||state.dashboard||draggingID)return;
+  const point=nearest(sourcePoints,e.position);if(!point)return;
+  nativeHit={point,x:lastPointer3D.x,y:lastPointer3D.y};
+  pathHover=true;window.cursorAt(point);send('preview',point);
+ };
+ hitLine.addEventListener('gmp-pointermove',nativeMove);
+ hitLine.addEventListener('gmp-pointerover',nativeMove);
+ hitLine.addEventListener('gmp-pointerout',()=>{nativeHit=null;if(!draggingID)endPathPreview()});
+ let probes=[],frame=0,removed=false,sourcePoints=points;
+ function setPoints(values){
+  sourcePoints=values;nativeHit=null;
+  const anchors=values.filter((p,i)=>p.manual!==false||i===0||i===values.length-1);
+  const chosen=simplify3DPath(anchors.length>1?anchors:values,target);
+  const geometry=chosen.map(p=>({lat:p.lat,lng:p.lng,altitude:0}));nativeLine.path=geometry;hitLine.path=geometry;
+  if(probes.length===chosen.length&&probes.every((p,i)=>p.point.id===chosen[i].id)){
+   probes.forEach((p,i)=>{p.point=chosen[i];p.marker.position={lat:p.point.lat,lng:p.point.lng,altitude:0}});return;
+  }
+  probes.forEach(p=>p.marker.remove());
+  probes=chosen.map(point=>{
+   const marker=new google3DLibrary.MarkerElement({position:{lat:point.lat,lng:point.lng,altitude:0},altitudeMode:'CLAMP_TO_GROUND',collisionBehavior:'REQUIRED',anchorLeft:'-50%',anchorTop:'-50%'});
+   const dot=document.createElement('span');Object.assign(dot.style,{display:'block',width:'2px',height:'2px',opacity:'0',pointerEvents:'none'});
+   marker.append(dot);marker.style.pointerEvents='none';target.append(marker);return {point,marker,dot};
+  });
+ }
+ // Interaction probes are deliberately independent of nativeLine.path.
+ function screenPoints(){return probes.map(({point,dot})=>{
+  const r=dot.getBoundingClientRect(),expected=pixelFor3DGround(target,point),viewport=target.getBoundingClientRect();
+  if(!expected||!r.width||!r.height)return null;
+  const x=r.left+r.width/2,y=r.top+r.height/2,right=viewport.left+viewport.width,bottom=viewport.top+viewport.height;
+  if((expected.x<viewport.left&&x>=viewport.left)||(expected.x>right&&x<=right)||(expected.y<viewport.top&&y>=viewport.top)||(expected.y>bottom&&y<=bottom))return null;
+  return {x,y,point,depth:expected.depth};
+ })}
+ function draw(){
+  if(removed)return;cursor?.update?.();const r=container.getBoundingClientRect();
+  for(const record of pointMarkers){
+   const p=pixelFor3DGround(target,record.point),bounds=(record.marker.firstElementChild||record.marker).getBoundingClientRect();
+   const margin=record.marker.style.visibility==='hidden'?24:12;
+   const inside=p&&p.x>=r.left+margin&&p.x<=r.left+r.width-margin&&p.y>=r.top+margin&&p.y<=r.top+r.height-margin;
+   const drawn=bounds.width>0&&bounds.height>0&&bounds.left>=r.left&&bounds.top>=r.top&&bounds.left+bounds.width<=r.left+r.width&&bounds.top+bounds.height<=r.top+r.height;
+   record.marker.style.visibility=inside&&drawn?'visible':'hidden';
+  }
+  frame=requestAnimationFrame(draw);
+ }
+ const result={_screenLine:true,screenPoints,get nativeHoverActive(){return !!nativeHit},nativeHitAt(x,y){return nativeHit&&Math.hypot(x-nativeHit.x,y-nativeHit.y)<=2?nativeHit.point:null},remove(){removed=true;cancelAnimationFrame(frame);nativeHit=null;hitLine.remove();nativeLine.remove();probes.forEach(p=>p.marker.remove())},addEventListener(){},get path(){return sourcePoints},set path(p){setPoints(p)},set strokeWidth(w){nativeLine.strokeWidth=w;hitLine.strokeWidth=w*9},set strokeColor(c){nativeLine.strokeColor=c}};
+ setPoints(points);frame=requestAnimationFrame(draw);return result;
+}
+function install3DMarkerDragging(marker,point){
+ let start=null,dragged=false;
+ function move(e){
+  if(!start)return;
+  e.preventDefault();e.stopImmediatePropagation();
+  const location=pointerGround(e);if(!location)return;
+  dragged=dragged||Math.hypot(e.clientX-start.x,e.clientY-start.y)>2;
+  const position={lat:start.lat+location.lat-start.hit.lat,lng:start.lng+location.lng-start.hit.lng};
+  if(provider==='google')marker.setPosition(position);else marker.position={...position,altitude:0};updateDraggedPath(point.id,position);
+ }
+ function end(e){
+  if(!start)return;
+  move(e);start=null;draggingID=null;
+  document.removeEventListener('pointermove',move,true);document.removeEventListener('pointerup',end,true);document.removeEventListener('pointercancel',cancel,true);
+  try{marker.releasePointerCapture(e.pointerId)}catch(_){}
+  if(pendingState){pendingState.points=state.points;state=pendingState;pendingState=null;}
+  if(dragged)send('move',{id:point.id,lat:point.lat,lng:point.lng});
+  else {send('focusAnchor',{id:point.id});send('seek',{time:point.time});}
+ }
+ function cancel(e){end(e)}
+ marker._beginAnchorDrag=e=>{
+  if(e.button!==0||e.shiftKey||e.metaKey)return;
+  const location=pointerGround(e);if(!location)return;
+  e.preventDefault();e.stopImmediatePropagation();
+  start={x:e.clientX,y:e.clientY,lat:point.lat,lng:point.lng,hit:location};dragged=false;draggingID=point.id;clearTimeout(clickTimer);
+  try{marker.setPointerCapture(e.pointerId)}catch(_){}
+  document.addEventListener('pointermove',move,true);document.addEventListener('pointerup',end,true);document.addEventListener('pointercancel',cancel,true);
+ };
+ if(marker.addEventListener)marker.addEventListener('pointerdown',marker._beginAnchorDrag,{capture:true});
+}
 function installGoogle3DGestures(target){
- let active=false,startRange=0,zooming=false;
- const begin=()=>{active=true;startRange=target.range;};
- const change=scale=>{if(!active||!(scale>0))return;target.range=Math.max(20,Math.min(20000000,startRange/scale**3));};
- target.addEventListener('gesturestart',e=>{e.preventDefault();e.stopImmediatePropagation();begin()},{capture:true,passive:false});
- target.addEventListener('gesturechange',e=>{if(!active||!(e.scale>0))return;e.preventDefault();e.stopImmediatePropagation();change(e.scale)},{capture:true,passive:false});
- target.addEventListener('gestureend',e=>{if(!active)return;e.preventDefault();e.stopImmediatePropagation();active=false},{capture:true,passive:false});
- // Shift+scroll is a common map zoom gesture; on macOS Command should behave
- // the same way. Preserve ordinary wheel scrolling for the containing view.
+ // Own the complete drag so releasing either modifier resumes panning from
+ // the current cursor, without a stale native drag origin or a camera jump.
+ let drag=null,suppressClick=false;
+ const down=e=>{
+  if(e.button!==0)return;
+  suppressClick=false;
+  const onMarker=e.composedPath?.().some(node=>node!==target&&node.tagName?.toLowerCase().includes('marker'));
+  if(onMarker&&!e.shiftKey&&!e.metaKey)return;
+  drag={x:e.clientX,y:e.clientY,startX:e.clientX,startY:e.clientY};
+  // Keep the trusted down/up pair so Google can report exact terrain clicks.
+ };
+ const move=e=>{
+  lastPointer3D={x:e.clientX,y:e.clientY};if(!drag)return;
+  const dx=e.clientX-drag.x,dy=e.clientY-drag.y;
+  e.preventDefault();e.stopImmediatePropagation();
+  if(Math.hypot(dx,dy)>0){
+   suppressClick=suppressClick||Math.hypot(e.clientX-drag.startX,e.clientY-drag.startY)>3;
+   if(e.shiftKey||e.metaKey){
+    target.heading=((target.heading||0)+dx*.3+360)%360;
+    target.tilt=Math.max(target.minTilt??0,Math.min(target.maxTilt??85,(target.tilt||0)-dy*.25));
+   }else{
+    const previous=groundAt3DPixel(target,drag.x,drag.y),next=groundAt3DPixel(target,e.clientX,e.clientY),center=target.center;
+    if(previous&&next&&center)target.center={lat:Math.max(-85,Math.min(85,center.lat+previous.lat-next.lat)),lng:((center.lng+previous.lng-next.lng+540)%360)-180,altitude:center.altitude||0};
+   }
+  }
+  drag={...drag,x:e.clientX,y:e.clientY};
+ };
+ const mouseMove=e=>{if(drag){e.preventDefault();e.stopImmediatePropagation()}};
+ const end=()=>{drag=null};
+ const click=e=>{if(suppressClick){e.preventDefault();e.stopImmediatePropagation()}};
+ target.addEventListener('pointerdown',down,{capture:true,passive:false});
+ target.addEventListener('gmp-click',click,{capture:true});
+ document.addEventListener('pointermove',move,true);document.addEventListener('mousemove',mouseMove,true);document.addEventListener('pointerup',end,true);document.addEventListener('pointercancel',end,true);
+ const previousDispose=disposeZoom;disposeZoom=()=>{previousDispose();document.removeEventListener('pointermove',move,true);document.removeEventListener('mousemove',mouseMove,true);document.removeEventListener('pointerup',end,true);document.removeEventListener('pointercancel',end,true)};
+ let active=false,startRange=0,anchor=null;
+ const project=c=>({x:(c.lng+180)/360,y:(1-Math.log(Math.tan(Math.PI/4+c.lat*Math.PI/360))/Math.PI)/2});
+ const unproject=p=>({lat:Math.atan(Math.sinh(Math.PI*(1-2*p.y)))*180/Math.PI,lng:((p.x*360%360+360)%360)-180});
+ function takeAnchor(event){
+  const rect=target.getBoundingClientRect(),c=target.center;if(!c)return null;
+  const x=(Number.isFinite(event.clientX)?event.clientX:rect.left+rect.width/2)-rect.left-rect.width/2;
+  const y=(Number.isFinite(event.clientY)?event.clientY:rect.top+rect.height/2)-rect.top-rect.height/2;
+  const center=project(c),scale=256*2**zoomForRange(c.lat,target.range,rect.height,target.fov||35);
+  return {x,y,point:{x:center.x+x/scale,y:center.y+y/scale},altitude:c.altitude||0};
+ }
+ function zoomAt(range){
+  range=Math.max(20,Math.min(20000000,range));if(!anchor||!target.center)return;
+  let center=target.center;
+  // Solve latitude-dependent Mercator scale while keeping the original cursor
+  // location fixed. Always use the effective range after Google's clamping.
+  target.range=range;const applied=target.range;
+  for(let i=0;i<8;i++){
+   const scale=256*2**zoomForRange(center.lat,applied,mapViewportHeight(target),target.fov||35);
+   center=unproject({x:anchor.point.x-anchor.x/scale,y:anchor.point.y-anchor.y/scale});
+  }
+  target.center={...center,altitude:anchor.altitude};
+ }
+ const consume=e=>{e.preventDefault();e.stopImmediatePropagation()};
+ target.addEventListener('gesturestart',e=>{consume(e);active=true;startRange=target.range;anchor=takeAnchor(e)},{capture:true,passive:false});
+ target.addEventListener('gesturechange',e=>{if(!active||!(e.scale>0))return;consume(e);zoomAt(startRange/e.scale**3)},{capture:true,passive:false});
+ target.addEventListener('gestureend',e=>{if(!active)return;consume(e);active=false;anchor=null},{capture:true,passive:false});
  target.addEventListener('wheel',e=>{
   if(!e.shiftKey&&!e.metaKey)return;
-  e.preventDefault();e.stopImmediatePropagation();
-  if(!zooming){zooming=true;startRange=target.range;}
-  target.range=Math.max(20,Math.min(20000000,target.range*Math.exp(e.deltaY*0.003)));
-  clearTimeout(target._modifierZoomTimer);target._modifierZoomTimer=setTimeout(()=>{zooming=false},100);
+  consume(e);if(active)return;anchor=takeAnchor(e);
+  const delta=e.deltaY*(e.deltaMode===1?16:e.deltaMode===2?mapViewportHeight(target):1);
+  zoomAt(target.range*Math.exp(delta*0.003));anchor=null;
  },{capture:true,passive:false});
 }
 function updateDraggedPath(id,position){
@@ -255,12 +657,13 @@ function updateDraggedPath(id,position){
     }
     if(creatorLine){
         if(provider==='google')creatorLine.setPath(state.points.map(p=>({lat:p.lat,lng:p.lng})));
-        else if(provider==='google3d')creatorLine.path=state.points.map(p=>({lat:p.lat,lng:p.lng}));
+        else if(provider==='google3d')creatorLine.path=state.points;
         else creatorLine.setLatLngs(state.points.map(p=>[p.lat,p.lng]));
     }
     if(creatorHitLine){if(provider==='google')creatorHitLine.setPath(state.points.map(p=>({lat:p.lat,lng:p.lng})));else creatorHitLine.setLatLngs(state.points.map(p=>[p.lat,p.lng]))}
     scheduleMapStyle();
     const positions=new Map(state.points.map(p=>[p.id,p]));
+    for(const record of pointMarkers){const p=positions.get(record.point.id);if(!p)continue;const m=record.marker;if(provider==='google')m.setPosition({lat:p.lat,lng:p.lng});else if(provider==='google3d')m.position={lat:p.lat,lng:p.lng,altitude:0};else m.setLatLng([p.lat,p.lng])}
     for(const [pointID,m] of generatedMarkers){
         const p=positions.get(pointID);
         if(!p)continue;
@@ -282,7 +685,7 @@ function showCoordinateEditor(point){
     root.addEventListener('submit',e=>{e.preventDefault();const parts=input.value.split(',');const lat=parts.length===2?Number(parts[0].trim()):NaN,lng=parts.length===2?Number(parts[1].trim()):NaN;if(!Number.isFinite(lat)||!Number.isFinite(lng)||Math.abs(lat)>90||Math.abs(lng)>180){error.style.display='block';input.focus();return}send('move',{id:point.id,lat,lng});closeCoordinateEditor()});
     root.addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();closeCoordinateEditor()}});
     document.getElementById('map').append(root);coordEditor={root,input,pointID:point.id};
-    let x=12,y=12;const size=map.getDiv?.()||map.getContainer?.();
+    let x=12,y=12;const size=map.getDiv?.()||map.getContainer?.()||map;
     if(provider==='osm'||provider==='esri'){const p=map.latLngToContainerPoint([point.lat,point.lng]);x=p.x+12;y=p.y+10}
     else if(provider==='google'){const projection=map.getProjection(),center=map.getCenter();if(projection&&center){const p=projection.fromLatLngToPoint(new google.maps.LatLng(point.lat,point.lng)),c=projection.fromLatLngToPoint(center),scale=2**map.getZoom();let dx=p.x-c.x;if(dx>.5)dx-=1;if(dx<-.5)dx+=1;x=size.clientWidth/2+dx*scale+12;y=size.clientHeight/2+(p.y-c.y)*scale+10}}
     else{x=12;y=12}
@@ -290,7 +693,7 @@ function showCoordinateEditor(point){
 }
 function marker(p,index,total){
     if(!p.manual&&index!==0&&index!==total-1)return;
-    const finish=state.hasVideo&&p.manual&&Math.abs(p.time-state.duration)<0.001;
+    const finish=total>1&&index===total-1;
     const start=index===0&&!finish;
     const endpoint=start||finish;
     const selected=p.manual&&state.focusedAnchorID===p.id;
@@ -300,11 +703,12 @@ function marker(p,index,total){
         const base=endpoint?(finish?finishSVG:startSVG):manualSVG,svg=selected?selectedSVG():base,size=16;
         const icon={url:'data:image/svg+xml;charset=UTF-8,'+encodeURIComponent(svg),scaledSize:new google.maps.Size(size,size),anchor:new google.maps.Point(size/2,size/2)};
         m=new google.maps.Marker({map,position:{lat:p.lat,lng:p.lng},draggable:p.manual,icon,optimized:true,zIndex:selected?10000:endpoint?1000:100});
+        if(p.manual)install3DMarkerDragging(m,p);
         event(m,'rightclick',()=>send('delete',{id:p.id}));
     }else if(provider==='google3d'){
-        m=new google3DLibrary.MarkerInteractiveElement({position:{lat:p.lat,lng:p.lng,altitude:0},title:endpoint?(start?'Start':'Finish'):'Path anchor',anchorLeft:'-50%',anchorTop:'-50%'});
-        const base=endpoint?(finish?finishSVG:startSVG):manualSVG;m.innerHTML=selected?selectedSVG():base;if(selected)m.style.zIndex='10000';
-        if(p.manual){m.style.touchAction='none';m.addEventListener('pointerdown',e=>{if(e.button!==0)return;e.preventDefault();e.stopPropagation();draggingID=p.id;clearTimeout(clickTimer);if(cursor){remove(cursor);cursor=null}try{m.setPointerCapture(e.pointerId)}catch(_){}},{capture:true});m.addEventListener('pointerup',e=>{if(draggingID!==p.id)return;e.preventDefault();e.stopPropagation();const moved={lat:p.lat,lng:p.lng};draggingID=null;if(pendingState){pendingState.points=state.points;state=pendingState;pendingState=null}window.cursorAt(moved);send('move',{id:p.id,...moved})},{capture:true});m.addEventListener('pointercancel',()=>{if(draggingID===p.id)draggingID=null},{capture:true})}
+        m=new google3DLibrary.MarkerElement({position:{lat:p.lat,lng:p.lng,altitude:0},title:endpoint?(start?'Start':'Finish'):'Path anchor',anchorLeft:'-50%',anchorTop:'-50%'});
+        const base=endpoint?(finish?finishSVG:startSVG):manualSVG;m.innerHTML=selected?selectedSVG():base;m.style.pointerEvents='none';m.querySelectorAll('svg').forEach(svg=>{svg.style.pointerEvents='none';svg.style.webkitUserSelect='none'});if(selected)m.style.zIndex='10000';
+        if(p.manual){m.style.touchAction='none';install3DMarkerDragging(m,p)}
         map.append(m);
     }else{
         const base=endpoint?(finish?finishSVG:startSVG):manualSVG,html=selected?selectedSVG():base,size=16;
@@ -344,16 +748,38 @@ function dashboardEndpoint(p,finish,trackID){
     layers.push(m);
 }
 function fitGooglePoints(points){if(!points.length)return;let b=new google.maps.LatLngBounds();points.forEach(p=>b.extend({lat:p.lat,lng:p.lng}));let span=b.toSpan();let c=b.getCenter();b=new google.maps.LatLngBounds({lat:c.lat()-span.lat()*.7,lng:c.lng()-span.lng()*.7},{lat:c.lat()+span.lat()*.7,lng:c.lng()+span.lng()*.7});map.fitBounds(b,30)}
-function fit3DPoints(points){if(!points.length)return;let south=Infinity,north=-Infinity,west=Infinity,east=-Infinity;for(const p of points){south=Math.min(south,p.lat);north=Math.max(north,p.lat);west=Math.min(west,p.lng);east=Math.max(east,p.lng)}const lat=(south+north)/2,lng=(west+east)/2;const span=Math.max((north-south)*111320,(east-west)*111320*Math.max(.05,Math.cos(lat*Math.PI/180)));map.center={lat,lng,altitude:0};map.range=Math.max(1200,span*1.7);map.tilt=0;map.heading=0}
-window.update=async function(s){if(draggingID){pendingState=s;return}const wanted=s.google?(s.google3D?'google3d':'google'):s.osmSatellite?'esri':'osm';let handoffCamera=null;if(map&&provider!==wanted){handoffCamera=currentCamera();if(handoffCamera){s={...s,camera:handoffCamera};send('camera',handoffCamera)}}state=s;await setup(s);if(!map)return;if(handoffCamera)applyCamera(handoffCamera);let signature=JSON.stringify([s.google,s.osmSatellite,s.google3D,s.googleSatellite,s.key,s.dashboard,s.points,s.focusedAnchorID,s.tracks,s.duration,s.hasVideo,s.importedGPX]);if(s.dashboard&&signature===renderSignature&&s.fit===fit){Object.entries(dashboardLines).forEach(([id,l])=>{let color=id===s.selected||id===s.hovered?'#1d65bd':routeBlue;provider==='google'?l.setOptions({strokeColor:color}):l.setStyle({color})});if(coverageLayer)coverageLayer.setMap(s.coverage&&provider==='google'?map:null);return}renderSignature=signature;dashboardLines={};creatorLine=null;creatorHitLine=null;pointMarkers=[];generatedMarkers.clear();layers.forEach(remove);layers=[];if(coverageLayer)coverageLayer.setMap(s.coverage&&provider==='google'?map:null);
-let all=[];if(s.dashboard){for(let t of s.tracks){if(t.visible===false)continue;all.push(...t.points);let l=line(t.points,t.id===s.selected||t.id===s.hovered?'#1d65bd':routeBlue,routeWidth());dashboardLines[t.id]=l;if(t.points.length){dashboardEndpoint(t.points[0],false,t.id);if(t.points.length>1)dashboardEndpoint(t.points[t.points.length-1],true,t.id)}let interaction=lineHitArea(t.points,routeWidth(),3)||l;event(interaction,'mouseover',()=>send('hover',{id:t.id}));event(interaction,'mouseout',()=>send('hover',{id:''}));event(interaction,'click',()=>send('select',{id:t.id}))}}
-else{all=s.points;if(all.length>1){let l=line(all,routeBlue,routeWidth());creatorLine=l;creatorHitLine=lineHitArea(all,routeWidth());let interaction=creatorHitLine||l;event(interaction,'mouseover',()=>setMapPathCursor(true));event(interaction,'mousemove',previewAtMapEvent);event(interaction,'mouseout',()=>{if(provider==='google3d')endPathPreview()});event(interaction,'click',e=>{const p=nearest(all,coord(e));if(!p)return;const now=performance.now(),double=now-lineLastClick<400;lineLastClick=now;clearTimeout(lineClickTimer);if(double){lineLastClick=0;send('insert',p)}else lineClickTimer=setTimeout(()=>{lineLastClick=0;if(!state.focusedAnchorID){lockedPoint=p;window.cursorAt(p,true);send('lockPreview',p)}},400)})}all.forEach((p,i)=>{if(!s.importedGPX||(s.anchorCount??all.length)<=500||i===0||i===all.length-1||p.id===s.focusedAnchorID)marker(p,i,all.length)});}
+function fit3DPoints(points){if(!points.length)return;let south=Infinity,north=-Infinity,west=Infinity,east=-Infinity;for(const p of points){south=Math.min(south,p.lat);north=Math.max(north,p.lat);west=Math.min(west,p.lng);east=Math.max(east,p.lng)}const lat=(south+north)/2,lng=(west+east)/2;const span=Math.max((north-south)*111320,(east-west)*111320*Math.max(.05,Math.cos(lat*Math.PI/180)));activate3DCamera(map,{lat,lng,zoom:zoomForRange(lat,Math.max(1200,span*1.7))}).catch(()=>notice('Google Maps 3D could not fit the terrain.'))}
+async function prepare3DHandoff(target){
+ if(Math.abs(target.tilt||0)<.01&&Math.abs(target.heading||0)<.01)return;
+ let finish,timer;
+ const settled=new Promise(resolve=>{finish=()=>{clearTimeout(timer);target.removeEventListener('gmp-animationend',finish);resolve()};target.addEventListener('gmp-animationend',finish,{once:true});});
+ try {
+  await target.flyCameraTo({durationMillis:220,endCamera:{center:target.center,range:target.range,tilt:0,heading:0,roll:0,fov:target.fov||35}});
+  timer=setTimeout(finish,600);await settled;
+ } finally {clearTimeout(timer);target.removeEventListener('gmp-animationend',finish)}
+}
+async function renderUpdate(s){if(draggingID){pendingState=s;return}const wanted=s.google?(s.google3D?'google3d':'google'):s.osmSatellite?'esri':'osm';let handoffCamera=null;if(map&&(provider!==wanted||(wanted==='google'&&map._gpxSatellite!==!!s.googleSatellite))){if(provider==='google3d')await prepare3DHandoff(map);handoffCamera=currentCamera();if(handoffCamera){s={...s,camera:handoffCamera};send('camera',handoffCamera)}}state=s;await setup(s);if(!map)return;if(handoffCamera)fit=s.fit||fit;let signature=JSON.stringify([s.google,s.osmSatellite,s.google3D,s.googleSatellite,s.key,s.dashboard,s.points,s.focusedAnchorID,s.tracks,s.duration,s.hasVideo,s.importedGPX]);if(s.dashboard&&signature===renderSignature&&s.fit===fit){styleDashboardLines(s);syncCoverage(s);return}renderSignature=signature;dashboardLines={};creatorLine=null;creatorHitLine=null;pointMarkers=[];generatedMarkers.clear();layers.forEach(remove);layers=[];syncCoverage(s);
+let all=[];if(s.dashboard){for(let t of s.tracks){if(t.visible===false)continue;all.push(...t.points);let l=line(t.points,routeBlue,routeWidth());dashboardLines[t.id]=l;if(t.points.length){dashboardEndpoint(t.points[0],false,t.id);if(t.points.length>1)dashboardEndpoint(t.points[t.points.length-1],true,t.id)}let interaction=lineHitArea(t.points,routeWidth(),3)||l;event(interaction,'mouseover',()=>setDashboardHover(t.id));event(interaction,'mouseout',()=>{if(state.hovered===t.id)setDashboardHover('')});event(interaction,'click',()=>send('select',{id:t.id}))}}
+else{all=s.points;if(all.length>1){let l=line(all,routeBlue,routeWidth());creatorLine=l;creatorHitLine=lineHitArea(all,routeWidth());let interaction=creatorHitLine||l;event(interaction,'mouseover',()=>setMapPathCursor(true));event(interaction,'mousemove',previewAtMapEvent);event(interaction,'mouseout',()=>{if(provider==='google3d')endPathPreview()});event(interaction,'dblclick',e=>{if(provider!=='google')return;e.stop?.();e.domEvent?.preventDefault();clearTimeout(lineClickTimer);lineLastClick=0;const p=nearest(state.points,coord(e));if(p)send('insert',p)});event(interaction,'click',e=>{const p=nearest(all,coord(e));if(!p)return;const now=performance.now(),double=provider!=='google'&&now-lineLastClick<400;lineLastClick=now;clearTimeout(lineClickTimer);if(double){lineLastClick=0;send('insert',p)}else lineClickTimer=setTimeout(()=>{lineLastClick=0;if(!state.focusedAnchorID){lockedPoint=p;window.cursorAt(p,true);send('lockPreview',p)}},400)})}all.forEach((p,i)=>{if(!s.importedGPX||(s.anchorCount??all.length)<=500||i===0||i===all.length-1||p.id===s.focusedAnchorID)marker(p,i,all.length)});}
 const hasSavedCamera=s.camera&&Number.isFinite(s.camera.lat)&&Number.isFinite(s.camera.lng)&&Number.isFinite(s.camera.zoom);
 const initialCameraPoints=s.dashboard?all:(!s.points.length?s.tracks.flatMap(t=>t.points):(!hasSavedCamera?s.points:[]));
 if(initialCameraPoints.length&&!hasSavedCamera){fit=s.fit||'__dashboard_initial_camera__';if(provider==='google3d')fit3DPoints(initialCameraPoints);else fitGooglePoints(initialCameraPoints)}
 else if(s.fit&&fit!==s.fit&&all.length){fit=s.fit;let target=s.dashboard?(s.tracks.find(t=>t.id===s.fit)?.points||all):all;if(provider==='google')fitGooglePoints(target);else if(provider==='google3d')fit3DPoints(target);else map.fitBounds(L.latLngBounds(target.map(p=>[p.lat,p.lng])).pad(.2),{maxZoom:18})}
 applyMapStyle();if(!pathHover)window.cursorAt(lockedPoint,!!lockedPoint);requestAnimationFrame(()=>send('rendered',{loadID:s.loadID||''}));};
-window.cursorAt=function(p,force=false){cursorPending=p;cursorForce=force;if(cursorFrame)return;cursorFrame=requestAnimationFrame(()=>{cursorFrame=0;const next=(pathHover||cursorForce)?cursorPending:null;if(!next||!map){if(cursor){remove(cursor);cursor=null}return}if(provider==='google'){if(cursor)cursor.setPosition(next);else cursor=new google.maps.Marker({map,position:next,icon:{path:google.maps.SymbolPath.CIRCLE,scale:6,fillColor:'#168bff',fillOpacity:1,strokeColor:'white',strokeWeight:1.5},zIndex:100000,clickable:false})}else if(provider==='google3d'){if(cursor)cursor.position={lat:next.lat,lng:next.lng,altitude:0};else{cursor=new google3DLibrary.Marker3DElement({position:{lat:next.lat,lng:next.lng,altitude:0},sizePreserved:true});cursor.innerHTML='<span class="preview-dot"></span>';cursor.style.pointerEvents='none';cursor.style.zIndex='100000';map.append(cursor)}}else if(cursor)cursor.setLatLng([next.lat,next.lng]);else cursor=L.marker([next.lat,next.lng],{pane:'markerPane',zIndexOffset:100000,interactive:false,icon:L.divIcon({className:'',html:'<span class=preview-dot></span>',iconSize:[12,12],iconAnchor:[6,6]})}).addTo(map)});};
-let resizeFrame=0;new ResizeObserver(()=>{if(resizeFrame)return;resizeFrame=requestAnimationFrame(()=>{resizeFrame=0;if(!map)return;if(provider==='osm'||provider==='esri')map.invalidateSize({pan:false,debounceMoveend:true});else if(provider==='google')google.maps.event.trigger(map,'resize')})}).observe(document.getElementById('map'));
+// Coalesce state changes while the API/library is loading. Never create concurrent
+// 3D maps or retry a failed provider because a cursor, selection, or camera changed.
+let updateRunning=false,queuedUpdate=null;
+window.update=async function(s){
+ queuedUpdate=s;
+ if(updateRunning)return;
+ updateRunning=true;
+ try {
+  while(queuedUpdate){const next=queuedUpdate;queuedUpdate=null;await renderUpdate(next);}
+ } catch(error) {
+  notice('The map could not finish loading. Select another map layer before trying again.');
+ } finally {updateRunning=false;}
+};
+window.cursorAt=function(p,force=false){cursorPending=p;cursorForce=force;if(cursorFrame)return;cursorFrame=requestAnimationFrame(()=>{cursorFrame=0;const next=(pathHover||cursorForce)?cursorPending:null;if(!next||!map){if(cursor){remove(cursor);cursor=null}return}if(provider==='google'){if(cursor)cursor.setPosition(next);else cursor=new google.maps.Marker({map,position:next,icon:{path:google.maps.SymbolPath.CIRCLE,scale:6,fillColor:'#168bff',fillOpacity:1,strokeColor:'white',strokeWeight:1.5},zIndex:100000,clickable:false})}else if(provider==='google3d'){if(cursor)cursor.position=next;else cursor=screenCursor3D(next)}else if(cursor)cursor.setLatLng([next.lat,next.lng]);else cursor=L.marker([next.lat,next.lng],{pane:'markerPane',zIndexOffset:100000,interactive:false,icon:L.divIcon({className:'',html:'<span class=preview-dot></span>',iconSize:[12,12],iconAnchor:[6,6]})}).addTo(map)});};
+let resizeFrame=0;new ResizeObserver(()=>{if(resizeFrame)return;resizeFrame=requestAnimationFrame(()=>{resizeFrame=0;if(!map)return;if(provider==='osm'||provider==='esri')map.invalidateSize({pan:false,debounceMoveend:true});else if(provider==='google')google.maps.event.trigger(map,'resize')})}).observe(document.body);
 send('ready');
 </script></body></html>

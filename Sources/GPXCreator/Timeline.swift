@@ -66,22 +66,6 @@ struct TimelineView: View {
         GeometryReader { geo in
             ZStack(alignment:.leading) {
                 RoundedRectangle(cornerRadius:6).fill(Color(red:0.95,green:0.955,blue:0.965))
-                    .contentShape(Rectangle())
-                    .gesture(DragGesture(minimumDistance:0).onChanged { value in
-                        guard model.videoURL != nil else { return }
-                        if !dragging { dragging=true; thumbnails.cancel(); model.beginScrubbing() }
-                        model.preview(at:time(at:value.location.x,width:geo.size.width))
-                    }.onEnded { value in
-                        guard dragging else { return }
-                        let t=time(at:value.location.x,width:geo.size.width)
-                        model.endScrubbing(at:t)
-                        if model.focusedAnchorID == nil { model.lockedPreviewTime=t; model.previewTime=t }
-                        dragging=false
-                    })
-                    .simultaneousGesture(SpatialTapGesture(count:2).onEnded { value in
-                        guard model.videoURL != nil else { return }
-                        model.addAnchorOnPath(at:time(at:value.location.x,width:geo.size.width))
-                    })
                 RoundedRectangle(cornerRadius:6).fill(Color.orange.opacity(0.10)).frame(width:geo.size.width*progress).allowsHitTesting(false)
                 Canvas { context, size in
                     let count = max(1,Int(size.width/8))
@@ -115,6 +99,23 @@ struct TimelineView: View {
             .frame(width:geo.size.width,height:43)
             .clipped()
             .contentShape(Rectangle())
+            // Attach scrubbing to the whole timeline, including the lower
+            // anchor band. Overlay controls must not shield the background.
+            .simultaneousGesture(DragGesture(minimumDistance:0).onChanged { value in
+                guard model.videoURL != nil else { return }
+                if !dragging { dragging=true; thumbnails.cancel(); model.beginScrubbing() }
+                model.preview(at:time(at:value.location.x,width:geo.size.width))
+            }.onEnded { value in
+                guard dragging else { return }
+                let t=time(at:value.location.x,width:geo.size.width)
+                model.endScrubbing(at:t)
+                if model.focusedAnchorID == nil { model.lockedPreviewTime=t; model.previewTime=t }
+                dragging=false
+            })
+            .simultaneousGesture(SpatialTapGesture(count:2).onEnded { value in
+                guard model.videoURL != nil else { return }
+                model.addAnchorOnPath(at:time(at:value.location.x,width:geo.size.width))
+            })
             .overlay(alignment:.topLeading) {
                 if let hover, !dragging, model.videoURL != nil {
                     VStack(spacing:4) {
@@ -137,7 +138,8 @@ struct TimelineView: View {
                     let t = time(at:location.x,width:geo.size.width)
                     hover=t; model.previewTime=t; thumbnails.request(t)
                 case .ended:
-                    hover=model.lockedPreviewTime; model.previewTime=model.lockedPreviewTime; thumbnails.cancel()
+                    guard !dragging else { hover=nil; return }
+                    hover=nil; model.previewTime=model.lockedPreviewTime; thumbnails.cancel()
                 }
             }
         }
@@ -151,7 +153,7 @@ struct TimelineView: View {
     @ViewBuilder private func anchorGlyph(_ anchor: Point,selected: Bool) -> some View {
         if selected {
             Circle().fill(Color.orange).frame(width:9,height:9).overlay(Circle().stroke(.white,lineWidth:1))
-        } else if model.videoURL != nil,scrubberAnchors.last?.id==anchor.id,abs(anchor.time-model.duration)<0.001 {
+        } else if scrubberAnchors.count>1,scrubberAnchors.last?.id==anchor.id {
             Image(systemName:"flag.checkered").font(.system(size:11,weight:.semibold)).foregroundStyle(.primary)
         } else {
             Circle().fill(scrubberAnchors.first?.id==anchor.id ? Color.green : Color(red:0.16,green:0.47,blue:0.84)).frame(width:8,height:8).overlay(Circle().stroke(.white,lineWidth:1))

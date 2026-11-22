@@ -2,9 +2,19 @@ import SwiftUI
 import AVKit
 import AppKit
 
+enum AppRuntime {
+    // SwiftPM/XCTest loads this executable into its test runner. Test failures
+    // belong in assertions and logs, never in modal alerts on the desktop.
+    static var isRunningTests: Bool {
+        NSClassFromString("XCTestCase") != nil || ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+    }
+}
+
 @main struct GPXCreatorApp: App {
+    @NSApplicationDelegateAdaptor(GPXApplicationDelegate.self) private var applicationDelegate
     @StateObject private var model=AppModel()
-    var body: some Scene { WindowGroup { ContentView(model:model).preferredColorScheme(.light).frame(minWidth:1000,minHeight:720) }.windowStyle(.hiddenTitleBar).commands { CommandGroup(replacing:.undoRedo) { Button("Undo") { model.undo() }.keyboardShortcut("z",modifiers:.control).disabled(!model.canUndo);Button("Redo") { model.redo() }.keyboardShortcut("z",modifiers:[.control,.option]).disabled(!model.canRedo) };CommandGroup(replacing:.appSettings) { Button("Settings…") { model.settings=true }.keyboardShortcut(",") } } }
+    @StateObject private var videoTools=VideoToolsModel()
+    var body: some Scene { WindowGroup { ContentView(model:model,videoTools:videoTools).preferredColorScheme(.light).frame(minWidth:1000,minHeight:720) }.windowStyle(.hiddenTitleBar).commands { CommandGroup(replacing:.undoRedo) { Button("Undo") { model.undo() }.keyboardShortcut("z",modifiers:.control).disabled(!model.canUndo);Button("Redo") { model.redo() }.keyboardShortcut("z",modifiers:[.control,.shift]).disabled(!model.canRedo) ;Divider();Button("Clear History") { model.clearHistory() }.disabled(!model.canUndo && !model.canRedo) };CommandGroup(replacing:.appSettings) { Button("Settings…") { model.settings=true }.keyboardShortcut(",") } } }
 }
 struct WindowControlsPositioner: NSViewRepresentable {
     func makeNSView(context: Context) -> WindowControlsView { WindowControlsView() }
@@ -102,6 +112,8 @@ struct IconSquareButtonStyle: ButtonStyle {
 
 struct ContentView: View {
     @ObservedObject var model: AppModel
+    @State private var showingMapLayers=false
+    @ObservedObject var videoTools: VideoToolsModel
     @AppStorage("dashboardWidth") var dashboardWidth=310.0
     @AppStorage("creatorWidth") var creatorWidth=290.0
     @State var resizeStart: Double?
@@ -119,9 +131,9 @@ struct ContentView: View {
                     ProgressView().controlSize(.small)
                     Text(message).font(.caption).foregroundStyle(.secondary)
                 }
-                Button { model.choose(dashboard:model.tab==1) } label: {
+                Button { if model.tab == 2 { videoTools.choose() } else { model.choose(dashboard:model.tab==1) } } label: {
                     Image(systemName:"plus").frame(width:32,height:32).contentShape(Rectangle())
-                }.buttonStyle(IconSquareButtonStyle()).help(model.tab==1 ? "Import GPX" : "Import video or GPX")
+                }.buttonStyle(IconSquareButtonStyle()).disabled(model.tab == 2 && videoTools.loading).help(model.tab == 2 ? "Open video for Video Tools" : model.tab==1 ? "Import GPX" : "Import video or GPX")
                 if model.tab==0 {
                     Button { withAnimation(.easeInOut(duration:0.25)) { model.controls.toggle() } } label: {
                         Image(systemName:"sidebar.right").frame(width:32,height:32).contentShape(Rectangle())
@@ -133,6 +145,7 @@ struct ContentView: View {
                 VStack(spacing:8) {
                     nav("GPX Creator",icon:"point.3.filled.connected.trianglepath.dotted",tab:0)
                     nav("Path Dashboard",icon:"map",tab:1)
+                    nav("Video Tools",icon:"film.stack",tab:2)
                     Spacer()
                     Button { model.settings=true } label: {
                         Image(systemName:"gearshape").font(.system(size:21)).frame(width:50,height:45)
@@ -142,18 +155,27 @@ struct ContentView: View {
                     }.padding(.bottom,12)
                 }.padding(.top,8).frame(width:84)
                 GeometryReader { geo in
-                    HStack(spacing:0) {
-                        if model.tab==1 {
+                    ZStack {
+                        VideoToolsView(model:videoTools).opacity(model.tab==2 ? 1 : 0).allowsHitTesting(model.tab==2).accessibilityHidden(model.tab != 2)
+                        HStack(spacing:0) {
                             ZStack(alignment:.topTrailing) {
                                 MapView(model:model,dashboard:true)
                                 VStack(alignment:.trailing,spacing:8) {
                                     mapLayersMenu(dashboard:true)
-                                    if model.dashboardGoogle { Toggle("Street View coverage",isOn:$model.coverage).toggleStyle(.checkbox).padding(12).background(.regularMaterial,in:RoundedRectangle(cornerRadius:10)) }
+                                    if model.dashboardGoogle {
+                                        Button { model.coverage.toggle() } label: {
+                                            HStack(spacing:8) {
+                                                Image(systemName:model.coverage ? "checkmark.square.fill" : "square").foregroundStyle(model.coverage ? Color.accentColor : Color.secondary)
+                                                Text("Street View coverage")
+                                            }.modifier(MapControlSurface())
+                                        }.buttonStyle(StableMapButtonStyle()).foregroundStyle(Color.primary).accessibilityValue(model.coverage ? "On" : "Off")
+                                    }
                                 }.padding(14)
                             }.modifier(WorkspaceGlassPanel())
                             resize(width:$dashboardWidth,total:geo.size.width)
                             dashboard.frame(width:min(dashboardWidth,geo.size.width*0.5))
-                        } else {
+                        }.opacity(model.tab==1 ? 1 : 0).allowsHitTesting(model.tab==1).accessibilityHidden(model.tab != 1)
+                        HStack(spacing:0) {
                             VStack(spacing:0) {
                                 video.frame(height:max(150,min(geo.size.height-125,geo.size.height*videoHeightFraction)))
                                 videoDivider(total:geo.size.height)
@@ -171,35 +193,50 @@ struct ContentView: View {
                             .allowsHitTesting(model.controls)
                             .accessibilityHidden(!model.controls)
                             .animation(.easeInOut(duration:0.25),value:model.controls)
-                        }
+                        }.opacity(model.tab==0 ? 1 : 0).allowsHitTesting(model.tab==0).accessibilityHidden(model.tab != 0)
                     }
                 }.padding(.bottom,8).padding(.trailing,8)
             }
         }.background(WindowGlassBackground()).ignoresSafeArea(.container,edges:.top)
         .onExitCommand { model.escapeSelection() }
         .onAppear { videoHeightFraction=savedVideoHeightFraction }
-                .alert("Unable to complete action",isPresented:Binding(get:{model.error != nil},set:{if !$0 {model.error=nil}})) { Button("OK") { model.error=nil } } message: { Text(model.error ?? "") }
+                .alert("Unable to complete action",isPresented:Binding(get:{!AppRuntime.isRunningTests && model.error != nil},set:{if !$0 {model.error=nil}})) { Button("OK") { model.error=nil } } message: { Text(model.error ?? "") }
     }
     func nav(_ title: String,icon: String,tab: Int) -> some View { Button { model.tab=tab } label: { VStack(spacing:7) { Image(systemName:icon).font(.system(size:21));Text(title).font(.system(size:10,weight:.medium)).multilineTextAlignment(.center) }.frame(width:72,height:66).foregroundStyle(model.tab==tab ? .orange : .secondary) }.buttonStyle(IconSquareButtonStyle(selected:model.tab==tab)) }
     func mapLayersMenu(dashboard: Bool) -> some View {
-        Menu {
-            Button { if dashboard { model.dashboardGoogle=false;model.dashboardEsriSatellite=false } else { model.google=false;model.google3D=false;model.creatorEsriSatellite=false } } label: {
+        Button { showingMapLayers.toggle() } label: {
+            Image(systemName:"square.3.layers.3d")
+                .font(.system(size:18))
+                .modifier(MapControlSurface())
+        }
+        .buttonStyle(StableMapButtonStyle())
+        .accessibilityLabel("Map layers")
+        .popover(isPresented:$showingMapLayers,arrowEdge:.top) {
+            VStack(alignment:.leading,spacing:6) {
+
+            Button { showingMapLayers=false; if dashboard { model.dashboardGoogle=false;model.dashboardEsriSatellite=false } else { model.google=false;model.google3D=false;model.creatorEsriSatellite=false } } label: {
                 HStack { if dashboard ? (!model.dashboardGoogle && !model.dashboardEsriSatellite) : (!model.google && !model.creatorEsriSatellite) { Image(systemName:"checkmark") };Text("OpenStreetMap") }
             }
-            Button { if dashboard { model.dashboardGoogle=false;model.dashboardEsriSatellite=true } else { model.google=false;model.google3D=false;model.creatorEsriSatellite=true } } label: {
+            Button { showingMapLayers=false; if dashboard { model.dashboardGoogle=false;model.dashboardEsriSatellite=true } else { model.google=false;model.google3D=false;model.creatorEsriSatellite=true } } label: {
                 HStack { if dashboard ? model.dashboardEsriSatellite : model.creatorEsriSatellite { Image(systemName:"checkmark") };Text("OpenStreetMap Satellite") }
             }
-            Button { if dashboard { model.dashboardGoogle=true;model.dashboardEsriSatellite=false } else { model.google=true;model.google3D=false;model.creatorEsriSatellite=false } } label: {
-                HStack { if dashboard ? model.dashboardGoogle : model.google && !model.google3D { Image(systemName:"checkmark") };Text("Google Maps") }
+            Button { showingMapLayers=false; if dashboard { model.dashboardGoogleSatellite=false;model.dashboardGoogle=true;model.dashboardEsriSatellite=false } else { model.creatorGoogleSatellite=false;model.google=true;model.google3D=false;model.creatorEsriSatellite=false } } label: {
+                HStack { if dashboard ? model.dashboardGoogle && !model.dashboardGoogleSatellite : model.google && !model.google3D && !model.creatorGoogleSatellite { Image(systemName:"checkmark") };Text("Google Maps") }
+            }
+            Button { showingMapLayers=false;
+                if dashboard { model.dashboardGoogleSatellite=true;model.dashboardGoogle=true;model.dashboardEsriSatellite=false }
+                else { model.creatorGoogleSatellite=true;model.google=true;model.google3D=false;model.creatorEsriSatellite=false }
+            } label: {
+                HStack { if dashboard ? model.dashboardGoogle && model.dashboardGoogleSatellite : model.google && !model.google3D && model.creatorGoogleSatellite { Image(systemName:"checkmark") };Text("Google Satellite") }
             }
             if !dashboard {
-                Button { model.google=true;model.google3D=true;model.creatorEsriSatellite=false } label: {
+                Button { showingMapLayers=false; model.google=true;model.google3D=true;model.creatorEsriSatellite=false } label: {
                     HStack { if model.google3D { Image(systemName:"checkmark") };Text("Google Maps 3D") }
                 }
             }
-        } label: { Image(systemName:"square.3.layers.3d").font(.system(size:22)).frame(width:24,height:24) }
-        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("Map layers")
-        .padding(9).background(.ultraThinMaterial,in:RoundedRectangle(cornerRadius:10))
+
+            }.buttonStyle(.borderless).padding(12)
+        }
     }
     func resize(width: Binding<Double>,total: CGFloat) -> some View { Rectangle().fill(Color.clear).frame(width:10).contentShape(Rectangle()).overlay(Rectangle().fill(Color.gray.opacity(0.45)).frame(width:1,height:35)).gesture(DragGesture(minimumDistance:0,coordinateSpace:.global).onChanged { value in if resizeStart == nil { resizeStart=width.wrappedValue }; width.wrappedValue=max(240,min(total*0.5,(resizeStart ?? width.wrappedValue)-value.translation.width)) }.onEnded { _ in resizeStart=nil }).onHover { inside in if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() } } }
     func videoDivider(total: CGFloat) -> some View {
@@ -219,7 +256,7 @@ struct ContentView: View {
             Divider()
             ScrollViewReader { proxy in ScrollView { LazyVStack(spacing:6) {
                 if model.tracks.isEmpty { VStack(spacing:12) { Image(systemName:"map").font(.largeTitle);Text("Import GPX files to see them on the map.").font(.caption).multilineTextAlignment(.center) }.foregroundStyle(.secondary).padding(30) }
-                ForEach(model.tracks) { track in TrackRow(model:model,track:track,active:model.selected==track.id || model.hovered==track.id,select:{model.selected=track.id;model.fitID="";DispatchQueue.main.async {model.fitID=track.id}},edit:track.creatorState == nil ? nil : {model.editCreatorPathFromDashboard(id:track.id)},delete:{model.recordUndo();model.tracks.removeAll {$0.id==track.id};model.persist()}).id(track.id) }
+                ForEach(model.tracks) { track in TrackRow(model:model,track:track,active:model.selected==track.id,select:{model.selected=track.id;model.fitID="";DispatchQueue.main.async {model.fitID=track.id}},edit:track.creatorState == nil ? nil : {model.editCreatorPathFromDashboard(id:track.id)},delete:{model.recordUndo();model.tracks.removeAll {$0.id==track.id};model.persist()}).id(track.id) }
             }.padding(10) }.onChange(of:model.hovered) { _,id in if let id { withAnimation {proxy.scrollTo(id,anchor:.center)} } }.onChange(of:model.selected) { _,id in if let id {withAnimation {proxy.scrollTo(id,anchor:.center)}} } }
             Spacer(minLength:0)
             Text("Imported paths are saved in the app. Removing one leaves your original file untouched.").font(.caption).foregroundStyle(.secondary).padding(18)
@@ -238,7 +275,8 @@ struct ContentView: View {
                         .buttonStyle(.borderedProminent).tint(.orange)
                 }
             }
-        }
+
+        }.clipped()
         if model.videoURL != nil {
             HStack(spacing:12) { Button { if model.player.rate==0 { model.player.play() } else { model.pauseVideo() } } label: { Image(systemName:model.player.rate==0 ? "play.fill" : "pause.fill") }.buttonStyle(.plain).keyboardShortcut(.space,modifiers:[]).help("Play or pause video (Space)");Text(clock(model.time)).monospacedDigit().font(.caption);TimelineView(model:model);Text(clock(model.duration)).monospacedDigit().font(.caption) }.padding(12).background(.white.opacity(0.96),in:RoundedRectangle(cornerRadius:12)).padding(4)
         }
@@ -279,7 +317,7 @@ struct ContentView: View {
                         Label("Driving · 10 per sec",systemImage:"car.fill").tag(10)
                     }.pickerStyle(.menu)
                     if !model.importedGPX && model.points.count>1 { Text(model.samplesPerSecond == 0 ? "\(model.rendered.count) anchor points · no added samples" : "\(model.rendered.count) total points · generated at \(model.samplesPerSecond) samples per second").font(.caption).foregroundStyle(.secondary) }
-                    Text("Double-click an anchor to edit its coordinates. The checkered flag marks an anchor at the end of the video. Right-click an anchor to delete. Double-click the blue line to insert an anchor.").font(.caption).foregroundStyle(.secondary)
+                    Text("Double-click an anchor to edit its coordinates. Right-click an anchor to delete. Double-click the blue line to insert an anchor.").font(.caption).foregroundStyle(.secondary)
                     if model.gpxURL == nil && !model.points.isEmpty {
                         Button { model.clearPath() } label: { Label("Clear path",systemImage:"trash").frame(maxWidth:.infinity,alignment:.leading).padding(10) }.buttonStyle(FlatButtonStyle())
                     }
@@ -289,12 +327,20 @@ struct ContentView: View {
             VStack(spacing:8) {
                 if model.videoURL != nil {
                     if model.recordingStart != nil {
-                        DatePicker("Video recording started",selection:Binding(get:{model.recordingStart ?? Date()},set:{model.recordingStart=$0}),displayedComponents:[.date,.hourAndMinute])
-                            .datePickerStyle(.compact)
-                            .focused($recordingStartFocused)
-                            .background(ClickAwayObserver(commit:{ recordingStartFocused=false }))
+                        HStack(spacing:10) {
+                            Text("Video recording started")
+                                .font(.body)
+                            Spacer(minLength:0)
+                            RecordingStartPicker(date:Binding(get:{model.recordingStart ?? Date()},set:{model.setRecordingStart($0)}))
+                                .fixedSize()
+                                .environment(\.colorScheme,.light)
+                        }
                     } else if model.isLoadingRecordingStart {
-                        ProgressView("Reading video recording time…")
+                        HStack(spacing:8) {
+                            ProgressView().controlSize(.small)
+                            Text("Reading video recording time…")
+                                .foregroundStyle(.secondary)
+                        }
                     } else {
                         Text("No recording time found in the video. Set it before exporting for Street View.").font(.caption).foregroundStyle(.secondary)
                         Button("Manually set start time") { model.recordingStart=Date() }
@@ -311,6 +357,148 @@ struct ContentView: View {
     }
     func clock(_ t: Double) -> String { let milliseconds=Int(max(0,t)*1000);return String(format:"%02d:%02d:%02d.%03d",milliseconds/3_600_000,(milliseconds/60_000)%60,(milliseconds/1_000)%60,milliseconds%1_000) }
 }
+struct RecordingStartPicker: View {
+    @Binding var date: Date
+    @State private var showingPicker=false
+    @State private var yearText=""
+    @FocusState private var yearFocused: Bool
+    private var calendar: Calendar { .current }
+    private var year: Binding<Int> {
+        Binding(get:{calendar.component(.year,from:date)},set:{setCalendar(year:$0)})
+    }
+    private var month: Binding<Int> {
+        Binding(get:{calendar.component(.month,from:date)},set:{setCalendar(month:$0)})
+    }
+    private func syncYear() { yearText=String(calendar.component(.year,from:date)) }
+    private func commitYear() {
+        if let value=Int(yearText.trimmingCharacters(in:.whitespaces)),(1...9999).contains(value) {
+            setCalendar(year:value)
+        }
+        syncYear()
+    }
+    private func setCalendar(year: Int?=nil,month: Int?=nil) {
+        var parts=calendar.dateComponents([.year,.month,.day,.hour,.minute,.second,.nanosecond],from:date)
+        parts.year=min(9999,max(1,year ?? parts.year ?? 1))
+        parts.month=month ?? parts.month
+        let day=parts.day ?? 1
+        parts.day=1
+        guard let first=calendar.date(from:parts),let days=calendar.range(of:.day,in:.month,for:first) else { return }
+        parts.day=min(day,days.count)
+        if let value=calendar.date(from:parts) { date=value }
+    }
+    var body: some View {
+        HStack(spacing:6) {
+            RecordingDateField(date:$date,elements:.yearMonthDay)
+                .fixedSize()
+            RecordingDateField(date:$date,elements:.hourMinute)
+                .fixedSize()
+            Button { showingPicker.toggle() } label: {
+                Image(systemName:"calendar").foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Choose recording date")
+            .help("Choose a date or jump to a different year")
+            .popover(isPresented:$showingPicker,arrowEdge:.top) {
+                VStack(spacing:12) {
+                    HStack {
+                        Picker("Month",selection:month) {
+                            ForEach(1...12,id:\.self) { value in
+                                Text(calendar.monthSymbols[value-1]).tag(value)
+                            }
+                        }.labelsHidden().frame(width:140)
+                        TextField("Year",text:$yearText)
+                            .textFieldStyle(.roundedBorder).frame(width:64)
+                            .accessibilityLabel("Year")
+                            .focused($yearFocused)
+                            .onSubmit { commitYear();yearFocused=false }
+                            .background(ClickAwayObserver(commit:{ yearFocused=false }))
+                        Stepper("Year",value:year,in:1...9999).labelsHidden()
+                    }
+                    DatePicker("Recording date",selection:$date,displayedComponents:.date)
+                        .datePickerStyle(.graphical)
+                        .labelsHidden()
+                        .id(calendar.component(.year,from:date)*12+calendar.component(.month,from:date))
+                }
+                .padding(12)
+                .environment(\.colorScheme,.light)
+                .onAppear(perform:syncYear)
+                .onChange(of:yearFocused) { _,focused in if !focused { commitYear() } }
+                .onChange(of:date) { _,_ in if !yearFocused { syncYear() } }
+                .onDisappear(perform:commitYear)
+            }
+        }
+        .padding(.horizontal,7).padding(.vertical,4)
+        .background(.primary.opacity(0.04),in:RoundedRectangle(cornerRadius:6))
+    }
+}
+
+// Separate numeric fields keep punctuation from forwarding clicks to a previously
+// selected segment, as the native date control does.
+struct RecordingDateField: View {
+    @Binding var date: Date
+    var elements: NSDatePicker.ElementFlags
+    @State private var drafts: [Calendar.Component:String]=[:]
+    @FocusState private var focused: Calendar.Component?
+    private var components: [Calendar.Component] {
+        elements == .hourMinute ? [.hour,.minute] : [.month,.day,.year]
+    }
+    private func formatted(_ component: Calendar.Component) -> String {
+        String(format:component == .year ? "%04d" : "%02d",Calendar.current.component(component,from:date))
+    }
+    private func reload() {
+        for component in components { drafts[component]=formatted(component) }
+    }
+    private func commit(_ component: Calendar.Component) {
+        defer { drafts[component]=formatted(component) }
+        guard let value=Int(drafts[component] ?? "") else { return }
+        let range: ClosedRange<Int>
+        switch component {
+        case .year: range=1...9999
+        case .month: range=1...12
+        case .day: range=1...31
+        case .hour: range=0...23
+        default: range=0...59
+        }
+        guard range.contains(value) else { return }
+        let calendar=Calendar.current
+        var parts=calendar.dateComponents([.year,.month,.day,.hour,.minute,.second,.nanosecond],from:date)
+        parts.setValue(value,for:component)
+        // Keep month/year edits valid at the end of shorter months.
+        let day=parts.day ?? 1
+        parts.day=1
+        guard let first=calendar.date(from:parts),let days=calendar.range(of:.day,in:.month,for:first) else { return }
+        if component == .day && day>days.count { return }
+        parts.day=min(day,days.count)
+        if let updated=calendar.date(from:parts) { date=updated }
+    }
+    var body: some View {
+        HStack(spacing:0) {
+            ForEach(components,id:\.self) { component in
+                if component != components.first {
+                    Text(elements == .hourMinute ? ":" : "/")
+                        .contentShape(Rectangle())
+                        .onTapGesture { focused=nil }
+                }
+                TextField("",text:Binding(get:{drafts[component] ?? formatted(component)},set:{drafts[component]=$0}))
+                    .textFieldStyle(.plain)
+                    .multilineTextAlignment(.center)
+                    .frame(width:component == .year ? 36 : 20)
+                    .focused($focused,equals:component)
+                    .accessibilityLabel(String(describing:component))
+                    .onSubmit { commit(component);focused=nil }
+            }
+        }
+        .font(.system(size:NSFont.systemFontSize).monospacedDigit())
+        .onAppear(perform:reload)
+        .onChange(of:focused) { previous,current in
+            if let previous { commit(previous) }
+            if let current { drafts[current]=formatted(current) }
+        }
+        .onChange(of:date) { _,_ in if focused == nil { reload() } }
+        .background(ClickAwayObserver(commit:{ focused=nil }))
+    }
+}
+
 struct AnchorDetailsEditor: View {
     @ObservedObject var model: AppModel
     let anchorID: String
@@ -441,6 +629,7 @@ struct SidebarFileRow: View {
     let detail: String
     let icon: String
     var active=false
+    var externallyHovered=false
     var appIcon=false
     var blackIcon=false
     let select: () -> Void
@@ -496,7 +685,7 @@ struct SidebarFileRow: View {
                 .buttonStyle(.plain).help("Remove from app")
                 .opacity(hover ? 1 : 0).allowsHitTesting(hover)
         }.padding(12)
-            .background(active ? Color.orange.opacity(0.12) : hover ? Color.gray.opacity(0.06) : .clear,in:RoundedRectangle(cornerRadius:10))
+            .background(hover || externallyHovered ? Color.gray.opacity(0.06) : active ? Color.orange.opacity(0.12) : .clear,in:RoundedRectangle(cornerRadius:10))
             .contentShape(Rectangle()).onHover {hover=$0}
             .contextMenu {
                 if rename != nil {
@@ -520,10 +709,14 @@ struct TrackRow: View {
     @ObservedObject var model: AppModel
     let track: Track;let active: Bool;let select:()->Void;let edit:(()->Void)?;let delete:()->Void
     var body: some View {
-        SidebarFileRow(title:track.name,detail:track.date.formatted(date:.abbreviated,time:.shortened),icon:"point.topleft.down.to.point.bottomright.curvepath",active:active,appIcon:track.creatorState != nil,blackIcon:true,select:select,edit:edit,delete:delete,rename:{ value in
+        SidebarFileRow(title:track.name,detail:track.date.formatted(date:.abbreviated,time:.shortened),icon:"point.topleft.down.to.point.bottomright.curvepath",active:active,externallyHovered:model.hovered==track.id,appIcon:track.creatorState != nil,blackIcon:true,select:select,edit:edit,delete:delete,rename:{ value in
             guard let index=model.tracks.firstIndex(where:{$0.id==track.id}),model.tracks[index].name != value else { return }
             model.recordUndo();model.tracks[index].name=value;model.persist()
         },visibility:track.isVisible,toggleVisibility:{model.toggleTrackVisibility(track.id)})
+        .onHover { inside in
+            if inside { model.hovered=track.id }
+            else if model.hovered==track.id { model.hovered=nil }
+        }
     }
 }
 struct ImportedFileRow: View {
@@ -540,6 +733,100 @@ struct ImportedFileRow: View {
     }
 }
 struct SettingsView: View {
-    @ObservedObject var model: AppModel;@State var entry="";@State var saved=false
-    var body: some View { VStack(alignment:.leading,spacing:20) {Text("Map settings").font(.title2.bold());Text(model.key.isEmpty ? "Enter your Google Maps demo key." : "A Google Maps key is securely saved in Keychain.").foregroundStyle(.secondary);SecureField("Enter a new Google Maps key",text:$entry).textFieldStyle(.roundedBorder);Text("The saved key is never displayed here. Google Maps uses it to load the map and Street View coverage.").font(.caption).foregroundStyle(.secondary);HStack {Spacer();Button("Done") {model.settings=false};Button("Save key") { do {try KeyStore.save(entry.trimmingCharacters(in:.whitespacesAndNewlines));model.key=entry.trimmingCharacters(in:.whitespacesAndNewlines);entry="";model.settings=false} catch {model.error=error.localizedDescription} }.buttonStyle(.borderedProminent).disabled(entry.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty)} }.padding(28).frame(width:440) }
+    @ObservedObject var model: AppModel
+    @State private var entry=""
+    @State private var name=""
+    @State private var rename=""
+    @State private var failure: String?
+    @State private var removingKey=false
+    @State private var removingID: String?
+    @State private var editingID: String?
+    private var selectedID: String { model.mapsKeys.selectedID ?? "" }
+    var body: some View {
+        VStack(alignment:.leading,spacing:16) {
+            Text("Map settings").font(.title2.bold())
+            if model.mapsKeys.keys.isEmpty {
+                Text("Add a named Google Maps key to get started.").foregroundStyle(.secondary)
+            } else {
+                Text("Saved keys").font(.headline)
+                ScrollView {
+                    LazyVStack(spacing:6) {
+                        ForEach(model.mapsKeys.keys) { key in
+                            HStack(spacing:10) {
+                                Button { perform { try model.selectMapsKey(key.id) } } label: {
+                                    HStack(spacing:10) {
+                                        Image(systemName:selectedID == key.id ? "checkmark.circle.fill" : "circle")
+                                            .foregroundStyle(selectedID == key.id ? Color.accentColor : Color.secondary)
+                                        if editingID != key.id {
+                                            Text(key.name).lineLimit(1).frame(maxWidth:.infinity,alignment:.leading)
+                                        }
+                                    }.contentShape(Rectangle())
+                                }.buttonStyle(.plain).help("Use this key")
+                                    .accessibilityLabel("Use \(key.name)")
+                                if editingID == key.id {
+                                    TextField("Key name",text:$rename).textFieldStyle(.roundedBorder)
+                                        .onSubmit { saveRename(key.id) }
+                                    Button { saveRename(key.id) } label: { Image(systemName:"checkmark") }
+                                        .disabled(rename.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty)
+                                        .help("Save name").accessibilityLabel("Save key name")
+                                } else {
+                                    Button { rename=key.name;editingID=key.id } label: { Image(systemName:"pencil") }
+                                        .help("Edit key name").accessibilityLabel("Edit name for \(key.name)")
+                                }
+                                Button { removingID=key.id;removingKey=true } label: { Image(systemName:"xmark") }
+                                    .help("Remove key").accessibilityLabel("Remove \(key.name)")
+                            }
+                            .padding(10)
+                            .background(selectedID == key.id ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.04),in:RoundedRectangle(cornerRadius:8))
+                        }
+                    }.padding(6)
+                }.frame(height:190)
+                    .background(Color.primary.opacity(0.03),in:RoundedRectangle(cornerRadius:10))
+            }
+            Divider()
+            Text("Add a key").font(.headline)
+            TextField("Name (for example, Personal or Work)",text:$name).textFieldStyle(.roundedBorder)
+            SecureField("Google Maps API key",text:$entry).textFieldStyle(.roundedBorder)
+            Text("Keys are securely saved in Keychain. Only their names are shown. The selected key is used for Google Maps and Street View coverage.")
+                .font(.caption).foregroundStyle(.secondary)
+            if let failure { Text(failure).foregroundStyle(.red).font(.caption) }
+            HStack {
+                Spacer()
+                Button("Done") { model.settings=false }.keyboardShortcut(.cancelAction)
+                Button("Save and use key") {
+                    perform { try model.saveMapsKey(name:name,value:entry);entry="";name="" }
+                }.buttonStyle(.borderedProminent)
+                    .disabled(name.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty || entry.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty)
+            }
+        }.padding(28).frame(width:480)
+            .alert("Remove saved key?",isPresented:$removingKey) {
+                Button("Cancel",role:.cancel) {}
+                Button("Remove",role:.destructive) {
+                    if let removingID { perform { try model.removeMapsKey(removingID);if editingID == removingID { editingID=nil } } }
+                    removingID=nil
+                }
+            } message: { Text("This removes the key from this app. It does not revoke it in Google Cloud.") }
+
+    }
+    private func saveRename(_ id: String) {
+        perform { try model.renameMapsKey(id,name:rename);editingID=nil }
+    }
+    private func perform(_ action: () throws -> Void) {
+        do { try action();failure=nil } catch { failure=error.localizedDescription }
+    }
+}
+
+struct StableMapButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View { configuration.label }
+}
+
+struct MapControlSurface: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .foregroundStyle(Color.primary)
+            .padding(.horizontal,12)
+            .frame(height:42)
+            .background(.regularMaterial,in:RoundedRectangle(cornerRadius:10))
+            .contentShape(RoundedRectangle(cornerRadius:10))
+    }
 }

@@ -39,7 +39,7 @@ final class ZoomableVideoView: NSView {
         playerView.controlsStyle = .none
         playerView.videoGravity = .resizeAspectFill
         addSubview(playerView)
-        toolTip = "Scroll or pinch to zoom at the cursor. Drag to pan. Double-click to reset."
+        toolTip = nil
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     override var acceptsFirstResponder: Bool { true }

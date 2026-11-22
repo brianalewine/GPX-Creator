@@ -1,9 +1,50 @@
 import XCTest
 import SwiftUI
 import AVKit
+import WebKit
 @testable import GPXCreator
 
 final class VideoPreviewTests: XCTestCase {
+    @MainActor func testScrubbingWorksAcrossTimelineHeight() async throws {
+        let model=makeModel()
+        model.videoURL=URL(fileURLWithPath:"/tmp/timeline-test.mov")
+        model.duration=100
+        model.points=[Point(lat:0,lng:0,time:0),Point(lat:0.25,lng:0.25,time:25),Point(lat:1,lng:1,time:100)]
+        let host=NSHostingView(rootView:TimelineView(model:model).frame(width:400,height:43))
+        let window=NSWindow(contentRect:NSRect(x:0,y:0,width:400,height:43),styleMask:[.borderless],backing:.buffered,defer:false)
+        window.contentView=host;window.makeKeyAndOrderFront(nil)
+        defer { window.orderOut(nil) }
+        host.layoutSubtreeIfNeeded()
+        try await Task.sleep(for:.milliseconds(100))
+        for y in [CGFloat(12),CGFloat(37)] {
+            model.time=0;model.previewTime=nil;model.lockedPreviewTime=nil
+            for (type,x) in [(NSEvent.EventType.leftMouseDown,CGFloat(100)),(.leftMouseDragged,CGFloat(300)),(.leftMouseUp,CGFloat(300))] {
+                let location=host.convert(NSPoint(x:x,y:host.isFlipped ? y : 43-y),to:nil)
+                let event=try XCTUnwrap(NSEvent.mouseEvent(with:type,location:location,modifierFlags:[],timestamp:ProcessInfo.processInfo.systemUptime,windowNumber:window.windowNumber,context:nil,eventNumber:1,clickCount:1,pressure:1))
+                NSApp.sendEvent(event)
+                try await Task.sleep(for:.milliseconds(40))
+            }
+            XCTAssertEqual(model.time,75,accuracy:1,"The upper ticks and lower scrub band must both seek")
+        }
+    }
+    @MainActor func testMapPreservesShiftAndCommandModifierFlags() throws {
+        let web=MapWebView(frame:.zero,configuration:WKWebViewConfiguration())
+        web.usesGoogle3D=true
+        for modifier: NSEvent.ModifierFlags in [.command,.shift] {
+            let event=try XCTUnwrap(NSEvent.mouseEvent(with:.leftMouseDragged,location:NSPoint(x:30,y:40),modifierFlags:modifier,timestamp:1,windowNumber:0,context:nil,eventNumber:1,clickCount:1,pressure:0.5))
+            XCTAssertEqual(web.mapMouseEvent(event).modifierFlags,modifier)
+        }
+    }
+    @MainActor func testRecordingDateUndoRedoAndClearHistory() {
+        let model=makeModel(),first=Date(timeIntervalSince1970:100),second=Date(timeIntervalSince1970:200)
+        model.setRecordingStart(first);model.setRecordingStart(second)
+        model.undo();XCTAssertEqual(model.recordingStart,first)
+        model.redo();XCTAssertEqual(model.recordingStart,second)
+        model.undo();model.clearHistory()
+        XCTAssertFalse(model.canUndo);XCTAssertFalse(model.canRedo)
+        model.redo();XCTAssertEqual(model.recordingStart,first)
+        model.setRecordingStart(second);XCTAssertTrue(model.canUndo)
+    }
     @MainActor func testExportUsesRecordingStart() throws {
         let model=makeModel()
         model.points=[Point(lat:42,lng:-71,time:0),Point(lat:43,lng:-72,time:120)]
@@ -16,6 +57,31 @@ final class VideoPreviewTests: XCTestCase {
         let xml=try String(contentsOf:url)
         XCTAssertTrue(xml.contains("<time>2026-11-17T19:23:00Z</time>"))
         XCTAssertTrue(xml.contains("<time>2026-11-17T19:25:00Z</time>"))
+    }
+    @MainActor func testControlShortcutsUndoEveryRequestedEdit() throws {
+        let model=makeModel()
+        // Use the actual bridge with the same shared model as the key handler.
+        let edits=MapView.Coordinator(model,false)
+        func shortcut(redo: Bool=false) throws {
+            let event=try XCTUnwrap(NSEvent.keyEvent(with:.keyDown,location:.zero,modifierFlags:redo ? [.control,.shift,.capsLock] : [.control,.capsLock],timestamp:0,windowNumber:0,context:nil,characters:"\u{1a}",charactersIgnoringModifiers:"\u{1a}",isARepeat:false,keyCode:6))
+            XCTAssertTrue(model.handleHistoryShortcut(event))
+        }
+        func check(_ edit: ()->Void) throws {
+            let before=model.points,detail=model.samplesPerSecond,date=model.recordingStart,duration=model.duration
+            edit()
+            let after=model.points,afterDetail=model.samplesPerSecond,afterDate=model.recordingStart,afterDuration=model.duration
+            try shortcut();XCTAssertEqual(model.points,before);XCTAssertEqual(model.samplesPerSecond,detail);XCTAssertEqual(model.recordingStart,date);XCTAssertEqual(model.duration,duration)
+            try shortcut(redo:true);XCTAssertEqual(model.points,after);XCTAssertEqual(model.samplesPerSecond,afterDetail);XCTAssertEqual(model.recordingStart,afterDate);XCTAssertEqual(model.duration,afterDuration)
+        }
+        try check { edits.handle(["lat":42.0,"lng":-71.0],type:"add") }
+        try check { edits.handle(["lat":43.0,"lng":-72.0],type:"add") }
+        try check { edits.handle(["lat":42.25,"lng":-71.4,"time":0.5],type:"insertDragged") }
+        let id=try XCTUnwrap(model.points.first?.id)
+        try check { edits.handle(["id":id,"lat":44.0,"lng":-73.0],type:"move") }
+        try check { edits.handle(["id":id],type:"delete") }
+        try check { model.setSamplesPerSecond(model.samplesPerSecond == 5 ? 10 : 5) }
+        try check { model.clearPath() }
+        try check { model.setRecordingStart(Date(timeIntervalSince1970:123456789)) }
     }
     @MainActor private func makeModel(fileLoadTimeout: Duration = .seconds(20)) -> AppModel {
         let folder=FileManager.default.temporaryDirectory.appendingPathComponent("GPXCreatorTests-\(UUID().uuidString)")
@@ -38,6 +104,20 @@ final class VideoPreviewTests: XCTestCase {
         XCTAssertEqual(model.duration,1)
         bridge.handle(["lat":42.5,"lng":-71.5,"time":0.5],type:"insert")
         XCTAssertEqual(model.points.map(\.time),[0,0.5,1])
+    }
+    @MainActor func testScrubInsertionStaysBetweenPathEndpoints() {
+        let model=makeModel()
+        model.duration=120
+        model.points=[Point(lat:42,lng:-71,time:20),Point(lat:43,lng:-72,time:80)]
+        let original=model.points
+        for time in [-1.0,0,19,20,80,81,120,150] { model.addAnchorOnPath(at:time) }
+        XCTAssertEqual(model.points,original)
+        model.addAnchorOnPath(at:50)
+        XCTAssertEqual(model.points.map(\.time),[20,50,80])
+        XCTAssertEqual(model.points.first,original.first)
+        XCTAssertEqual(model.points.last,original.last)
+        model.undo()
+        XCTAssertEqual(model.points,original)
     }
     @MainActor func testPathHoverStillPreviewsWithSelectedAnchor() {
         let model=makeModel()
@@ -236,6 +316,10 @@ final class VideoPreviewTests: XCTestCase {
         XCTAssertNil(model.videoURL)
         XCTAssertNil(model.player.currentItem)
         XCTAssertEqual(model.points,path)
+        model.undo()
+        XCTAssertEqual(model.videoURL,URL(fileURLWithPath:"/tmp/video.mov"))
+        XCTAssertEqual(model.points,path)
+        model.redo();XCTAssertNil(model.videoURL);XCTAssertEqual(model.points,path)
     }
     @MainActor func testVideoResizeKeepsPlayerWithinPane() {
         let view=ZoomableVideoView(frame:NSRect(x:0,y:0,width:640,height:360))

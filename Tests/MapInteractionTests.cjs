@@ -20,9 +20,9 @@ for (const provider of ['osm','google']) {
     }
     const context=vm.createContext({
         window:{webkit:{messageHandlers:{bridge:{postMessage:m=>messages.push(m)}}}},
-        document:{getElementById:()=>({})},requestAnimationFrame:fn=>(frames.push(fn),frames.length),
-        ResizeObserver:class { observe() {} },clearTimeout,setTimeout,
-        L:{marker:(p,o)=>new Marker({lat:p[0],lng:p[1]},o),divIcon:o=>o},
+        document:{getElementById:()=>({}),createElement:()=>({}),head:{append(){}},addEventListener(){}},requestAnimationFrame:fn=>(frames.push(fn),frames.length),
+        cancelAnimationFrame(){},ResizeObserver:class { observe() {} },clearTimeout,setTimeout,
+        L:{Map:{extend:()=>class{}},SVG:{extend:()=>class{}},marker:(p,o)=>new Marker({lat:p[0],lng:p[1]},o),divIcon:o=>o},
         google:{maps:{Marker:class extends Marker { constructor(o){ super(o.position,o); } },SymbolPath:{CIRCLE:'circle'},Size:class {},Point:class {},LatLng:class {constructor(lat,lng){this.lat=lat;this.lng=lng;}}}}
     });
     vm.runInContext(script,context);
@@ -50,11 +50,11 @@ for (const provider of ['osm','google']) {
     assert.equal(messages.filter(m=>m.type==='move').length,1);
     assert.equal(messages.at(-1).lat,4);
     markers[1].events.click();
-    assert.equal(messages.at(-1).type,'unfinish');
+    assert.equal(messages.at(-1).type,'seek');
     for(const m of markers){
         const svg=provider==='google'?decodeURIComponent(m.options.icon.url):m.options.icon.html;
         assert.ok(svg.includes('<svg'));
-        assert.ok(svg.includes('width="32"'));
+        assert.ok(svg.includes('width="16"'));
         assert.ok(svg.includes('<circle'));
     }
     vm.runInContext(`
@@ -62,19 +62,21 @@ for (const provider of ['osm','google']) {
         marker(handle,1,3);
         applyMapStyle();
     `,context);
-    assert.equal(markers[2].visible,false,'nearby manual handles are hidden when zoomed out');
+    assert.equal(markers[2].visible,true,'manual anchors remain available at every zoom');
     assert.equal(markers[0].visible,true);
     assert.equal(markers[1].visible,true);
     vm.runInContext('map.zoom=20;applyMapStyle()',context);
     assert.equal(markers[2].visible,true,'handles appear when sufficiently separated');
-    assert.equal(vm.runInContext('routeWidth()',context),6.6);
+    assert.equal(vm.runInContext('routeWidth()',context),3.5);
+    while(frames.length)frames.shift()();
     vm.runInContext(`
-        const wheelTarget={zoom:12,steps:[],getZoom(){return this.zoom},getMinZoom(){return 1},getMaxZoom(){return 24},getContainer(){return {addEventListener:(name,fn)=>{this.wheel=fn}}},mouseEventToContainerPoint(){return {x:50,y:70}},setZoomAround(anchor,zoom){this.zoom=zoom;this.steps.push(zoom)}};
+        const pixel={x:50,y:70,subtract(){return this}};
+        const wheelTarget={zoom:12,steps:[],getZoom(){return this.zoom},getMinZoom(){return 1},getMaxZoom(){return 24},getContainer(){return {addEventListener:(name,fn)=>{if(name==='wheel')this.wheel=fn}}},mouseEventToContainerPoint(){return pixel},containerPointToLatLng(){return pixel},getSize(){return {divideBy(){return pixel}}},project(){return pixel},unproject(){return pixel},stop(){},_moveStart(){},_moveEnd(){},fire(){},_move(center,zoom){this.zoom=zoom;this.steps.push(zoom)}};
         map=wheelTarget;installSmoothWheel(wheelTarget);
         wheelTarget.wheel({deltaY:-120,deltaMode:0,preventDefault(){},stopPropagation(){}});
     `,context);
     while(frames.length)frames.shift()();
-    assert.ok(vm.runInContext('wheelTarget.steps.length>5',context),'wheel zoom interpolates across frames');
-    assert.ok(Math.abs(vm.runInContext('wheelTarget.zoom',context)-12.4)<0.003);
+    assert.equal(vm.runInContext('wheelTarget.steps.length',context),1,'wheel changes coalesce into one display frame');
+    assert.equal(vm.runInContext('wheelTarget.zoom',context),12.5);
 }
-console.log('Both providers: live dragging, endpoint circles, point decluttering, adaptive line width, and continuous wheel zoom passed.');
+console.log('PASS: both providers preserve live drag commits, endpoint markers, manual anchors, constant line width, and frame-coalesced wheel zoom.');

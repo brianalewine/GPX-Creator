@@ -1,3 +1,4 @@
+import WebKit
 import SwiftUI
 import AVKit
 import Security
@@ -57,6 +58,9 @@ private struct AppEditSnapshot: Equatable {
     var duration: Double
     var samplesPerSecond: Int
     var editingTrackID: String?
+    var recordingStart: Date?
+    var videoURL: URL?
+    var mapsKeys: MapsKeyLibrary
 }
 final class GPXParser: NSObject, XMLParserDelegate {
     var points: [Point] = []; var lat: Double?; var lng: Double?; var timestamp: Date?; var text = ""; var first: Date?
@@ -115,26 +119,60 @@ enum Geometry {
         return result
     }
 }
+struct SavedMapsKey: Codable, Identifiable, Equatable {
+    var id: String = UUID().uuidString
+    var name: String
+    var value: String
+}
+struct MapsKeyLibrary: Codable, Equatable {
+    var keys: [SavedMapsKey] = []
+    var selectedID: String?
+    var selectedValue: String { keys.first { $0.id == selectedID }?.value ?? "" }
+}
 enum KeyStore {
     static let service = "com.brian.gpxcreator.googlemaps"
-    static func read() -> String { var result: CFTypeRef?; let query: [String: Any] = [kSecClass as String:kSecClassGenericPassword,kSecAttrService as String:service,kSecAttrAccount as String:"maps",kSecReturnData as String:true]; guard SecItemCopyMatching(query as CFDictionary,&result)==errSecSuccess, let data=result as? Data else { return "" }; return String(data:data,encoding:.utf8) ?? "" }
-    static func save(_ key: String) throws {
-        let q: [String:Any] = [kSecClass as String:kSecClassGenericPassword,kSecAttrService as String:service,kSecAttrAccount as String:"maps"]
-        let data=Data(key.utf8); let status=SecItemUpdate(q as CFDictionary,[kSecValueData as String:data] as CFDictionary)
-        if status == errSecItemNotFound { var item=q; item[kSecValueData as String]=data; let s=SecItemAdd(item as CFDictionary,nil); guard s==errSecSuccess else { throw NSError(domain:NSOSStatusErrorDomain,code:Int(s)) } }
-        else if status != errSecSuccess { throw NSError(domain:NSOSStatusErrorDomain,code:Int(status)) }
+    private static func readData(account: String) -> Data? {
+        var result: CFTypeRef?
+        let query: [String:Any] = [kSecClass as String:kSecClassGenericPassword,kSecAttrService as String:service,kSecAttrAccount as String:account,kSecReturnData as String:true]
+        guard SecItemCopyMatching(query as CFDictionary,&result) == errSecSuccess else { return nil }
+        return result as? Data
+    }
+    static func library() -> MapsKeyLibrary {
+        if let data=readData(account:"named-maps-keys"),let library=try? JSONDecoder().decode(MapsKeyLibrary.self,from:data) { return library }
+        if let data=readData(account:"maps"),let value=String(data:data,encoding:.utf8),!value.isEmpty {
+            let key=SavedMapsKey(name:"Saved key",value:value)
+            return MapsKeyLibrary(keys:[key],selectedID:key.id)
+        }
+        return MapsKeyLibrary()
+    }
+    static func save(_ library: MapsKeyLibrary) throws {
+        let q: [String:Any] = [kSecClass as String:kSecClassGenericPassword,kSecAttrService as String:service,kSecAttrAccount as String:"named-maps-keys"]
+        let data=try JSONEncoder().encode(library)
+        let status=SecItemUpdate(q as CFDictionary,[kSecValueData as String:data] as CFDictionary)
+        if status == errSecItemNotFound {
+            var item=q;item[kSecValueData as String]=data
+            let status=SecItemAdd(item as CFDictionary,nil)
+            guard status == errSecSuccess else { throw NSError(domain:NSOSStatusErrorDomain,code:Int(status)) }
+        } else if status != errSecSuccess { throw NSError(domain:NSOSStatusErrorDomain,code:Int(status)) }
+        // Retire the original single-key item only after the library is safely saved.
+        let legacy: [String:Any] = [kSecClass as String:kSecClassGenericPassword,kSecAttrService as String:service,kSecAttrAccount as String:"maps"]
+        SecItemDelete(legacy as CFDictionary)
     }
 }
 @MainActor final class AppModel: ObservableObject {
-    @Published var tab=0; @Published var settings=false; @Published var key=KeyStore.read()
+    @Published var tab=0; @Published var settings=false; @Published private(set) var key=""
+    @Published private(set) var mapsKeys=MapsKeyLibrary()
     @Published var tracks: [Track]=[] { didSet { tracksRevision &+= 1 } }; @Published var selected: String?; @Published var hovered: String?
     @Published var focusedAnchorID: String?
     @Published private(set) var canUndo=false; @Published private(set) var canRedo=false
     @Published var coverage=false
     @Published var dashboardGoogle=(UserDefaults.standard.object(forKey:"dashboardGoogle") as? Bool) ?? true { didSet { UserDefaults.standard.set(dashboardGoogle,forKey:"dashboardGoogle") } }
+    @Published var dashboardGoogleSatellite=UserDefaults.standard.bool(forKey:"dashboardGoogleSatellite") { didSet { UserDefaults.standard.set(dashboardGoogleSatellite,forKey:"dashboardGoogleSatellite") } }
+    @Published var creatorGoogleSatellite=UserDefaults.standard.bool(forKey:"creatorGoogleSatellite") { didSet { UserDefaults.standard.set(creatorGoogleSatellite,forKey:"creatorGoogleSatellite") } }
     @Published var dashboardEsriSatellite=UserDefaults.standard.bool(forKey:"dashboardEsriSatellite") { didSet { UserDefaults.standard.set(dashboardEsriSatellite,forKey:"dashboardEsriSatellite") } }
     @Published var controls=UserDefaults.standard.bool(forKey:"creatorControls") { didSet { UserDefaults.standard.set(controls,forKey:"creatorControls") } }
-    @Published var google=false; @Published var google3D=false
+    @Published var google=UserDefaults.standard.bool(forKey:"creatorGoogle") { didSet { UserDefaults.standard.set(google,forKey:"creatorGoogle") } }
+    @Published var google3D=UserDefaults.standard.bool(forKey:"creatorGoogle3D") { didSet { UserDefaults.standard.set(google3D,forKey:"creatorGoogle3D") } }
     @Published var creatorEsriSatellite=UserDefaults.standard.bool(forKey:"creatorEsriSatellite") { didSet { UserDefaults.standard.set(creatorEsriSatellite,forKey:"creatorEsriSatellite") } }
     @Published var samplesPerSecond: Int = {
         let saved=UserDefaults.standard.object(forKey:"samplesPerSecond") as? Int ?? 1
@@ -148,6 +186,7 @@ enum KeyStore {
     @Published var duration=1.0; @Published var videoURL: URL?; @Published var gpxURL: URL?
     @Published var recordingStart: Date?
     @Published private(set) var isLoadingRecordingStart=false
+    @Published var videoError: String?
     @Published var error: String?; @Published var fitID=""; @Published var previewTime: Double?; @Published var lockedPreviewTime: Double?
     @Published var loadingMessage: String?
     @Published var editingTrackID: String?
@@ -166,6 +205,7 @@ enum KeyStore {
     private var scrubbing=false
     private var resumeAfterScrub=false
     private var restoringVideo=false
+    private var editKeyMonitor: Any?
     private var undoStack:[AppEditSnapshot]=[]
     private var redoStack:[AppEditSnapshot]=[]
     private lazy var seeker = ScrubSeeker { [weak self] time, exact, completion in
@@ -187,8 +227,14 @@ enum KeyStore {
         return result
     }
     init(storageFolder: URL? = nil,fileLoadTimeout: Duration = .seconds(20)) {
+        player.isMuted=true
         self.storageFolder=storageFolder
         self.fileLoadTimeout=fileLoadTimeout
+        editKeyMonitor=NSEvent.addLocalMonitorForEvents(matching:.keyDown) { [weak self] event in
+            self?.handleHistoryShortcut(event) == true ? nil : event
+        }
+        mapsKeys=KeyStore.library()
+        key=mapsKeys.selectedValue
         if let data=try? Data(contentsOf:folder.appendingPathComponent("tracks.json")), let saved=try? JSONDecoder().decode([Track].self,from:data) { tracks=saved }
         let savedPath=folder.appendingPathComponent("creator-path.json")
         if FileManager.default.fileExists(atPath:savedPath.path) {
@@ -202,6 +248,7 @@ enum KeyStore {
         observer=player.addPeriodicTimeObserver(forInterval:CMTime(seconds:0.1,preferredTimescale:600),queue:.main) { [weak self] t in Task { @MainActor in if let self, !self.scrubbing, !self.seeker.busy, self.previewTime == nil { self.time=t.seconds.isFinite ? t.seconds : 0 } } }
         if storageFolder == nil { restoreLastVideo() }
     }
+    deinit { if let editKeyMonitor { NSEvent.removeMonitor(editKeyMonitor) } }
     func persist() { do { try FileManager.default.createDirectory(at:folder,withIntermediateDirectories:true); try JSONEncoder().encode(tracks).write(to:folder.appendingPathComponent("tracks.json"),options:.atomic) } catch { self.error=error.localizedDescription } }
     func toggleTrackVisibility(_ id: String) {
         guard let index=tracks.firstIndex(where:{$0.id==id}) else { return }
@@ -209,11 +256,38 @@ enum KeyStore {
         tracks[index].isVisible.toggle()
         persist()
     }
+    @discardableResult func handleHistoryShortcut(_ event: NSEvent) -> Bool {
+        let flags=event.modifierFlags.intersection([.control,.shift,.command,.option])
+        guard flags == .control || flags == [.control,.shift] || flags == .command || flags == [.command,.shift],
+              event.keyCode == 6 || event.charactersIgnoringModifiers?.lowercased() == "z" else { return false }
+        // Committed app edits share one history, regardless of keyboard focus.
+        if flags.contains(.shift) {
+            if canRedo { redo() }
+            else if let manager=(NSApp.keyWindow?.firstResponder as? NSTextView)?.undoManager,manager.canRedo { manager.redo() }
+            else { return false }
+        } else {
+            if canUndo { undo() }
+            else if let manager=(NSApp.keyWindow?.firstResponder as? NSTextView)?.undoManager,manager.canUndo { manager.undo() }
+            else { return false }
+        }
+        return true
+    }
     func recordUndo() {
         undoStack.append(editSnapshot())
         if undoStack.count>100 { undoStack.removeFirst(undoStack.count-100) }
         redoStack.removeAll()
         refreshUndoAvailability()
+    }
+    func clearHistory() {
+        undoStack.removeAll();redoStack.removeAll();refreshUndoAvailability()
+        for window in NSApp.windows {
+            window.undoManager?.removeAllActions()
+            (window.firstResponder as? NSTextView)?.undoManager?.removeAllActions()
+        }
+    }
+    func setRecordingStart(_ value: Date) {
+        guard recordingStart != value else { return }
+        recordUndo();recordingStart=value
     }
     func undo() {
         guard let previous=undoStack.popLast() else { return }
@@ -224,10 +298,23 @@ enum KeyStore {
         undoStack.append(editSnapshot());restore(next);refreshUndoAvailability()
     }
     private func refreshUndoAvailability() { canUndo = !undoStack.isEmpty;canRedo = !redoStack.isEmpty }
-    private func editSnapshot() -> AppEditSnapshot { AppEditSnapshot(tracks:tracks,points:points,gpxURL:gpxURL,importedGPX:importedGPX,filled:filled,finished:finished,duration:duration,samplesPerSecond:samplesPerSecond,editingTrackID:editingTrackID) }
+    private func editSnapshot() -> AppEditSnapshot { AppEditSnapshot(tracks:tracks,points:points,gpxURL:gpxURL,importedGPX:importedGPX,filled:filled,finished:finished,duration:duration,samplesPerSecond:samplesPerSecond,editingTrackID:editingTrackID,recordingStart:recordingStart,videoURL:videoURL,mapsKeys:mapsKeys) }
     private func restore(_ snapshot: AppEditSnapshot) {
         suppressPathPersistence=true
         tracks=snapshot.tracks;points=snapshot.points;gpxURL=snapshot.gpxURL;importedGPX=snapshot.importedGPX;filled=snapshot.filled;finished=snapshot.finished
+        if mapsKeys != snapshot.mapsKeys {
+            do { try KeyStore.save(snapshot.mapsKeys);mapsKeys=snapshot.mapsKeys;key=mapsKeys.selectedValue }
+            catch { self.error=error.localizedDescription }
+        }
+        recordingStart=snapshot.recordingStart
+        if videoURL != snapshot.videoURL {
+            player.pause();videoURL=snapshot.videoURL
+            player.replaceCurrentItem(with:snapshot.videoURL.map { AVPlayerItem(url:$0) })
+            time=0
+            if let url=snapshot.videoURL { saveLastVideo(url) }
+            else { UserDefaults.standard.removeObject(forKey:"lastVideoBookmark");UserDefaults.standard.removeObject(forKey:"lastVideoPath") }
+        }
+        duration=snapshot.duration
         samplesPerSecond=snapshot.samplesPerSecond
         editingTrackID=snapshot.editingTrackID
         suppressPathPersistence=false;persistCreatorPath()
@@ -320,6 +407,8 @@ enum KeyStore {
             if url.startAccessingSecurityScopedResource() { scopedURLs.append(url) }
             let type = (try? url.resourceValues(forKeys:[.contentTypeKey]))?.contentType ?? UTType(filenameExtension:url.pathExtension)
             if videoOnly || (!dashboard && type?.conforms(to:.movie) == true) {
+                videoError=nil
+                recordUndo()
                 player.pause()
                 time=0; duration=1; previewTime=nil
                 recordingStart=nil
@@ -370,6 +459,7 @@ enum KeyStore {
         }
     }
     func clearVideo() {
+        guard videoURL != nil else { return };recordUndo()
         scrubbing=false; resumeAfterScrub=false
         player.pause(); player.replaceCurrentItem(with:nil)
         videoURL=nil; time=0; duration=1; previewTime=nil; lockedPreviewTime=nil
@@ -450,8 +540,10 @@ enum KeyStore {
         if let lng,lng.isFinite,abs(lng)<=180 { points[index].lng=lng }
     }
     func addAnchorOnPath(at time: Double) {
-        guard time.isFinite,rendered.count>1 else { return }
-        var anchorTime=max(0,min(duration,time))
+        let anchors=points.filter(\.manual).sorted { $0.time < $1.time }
+        guard time.isFinite,anchors.count>1,let first=anchors.first,let last=anchors.last,
+              time>first.time,time<last.time else { return }
+        var anchorTime=time
         if points.contains(where:{abs($0.time-anchorTime)<0.02}) {
             let earlier=points.map(\.time).filter{$0<anchorTime-0.02}.max()
             let later=points.map(\.time).filter{$0>anchorTime+0.02}.min()
@@ -464,6 +556,43 @@ enum KeyStore {
         if !importedGPX { filled=true }
         points.append(Point(lat:location.lat,lng:location.lng,time:anchorTime))
         points.sort{$0.time<$1.time}
+    }
+    func saveMapsKey(name: String, value: String) throws {
+        var library=mapsKeys
+        let name=name.trimmingCharacters(in:.whitespacesAndNewlines)
+        let value=value.trimmingCharacters(in:.whitespacesAndNewlines)
+        guard !name.isEmpty,!value.isEmpty else { return }
+        if let index=library.keys.firstIndex(where: { $0.value == value }) {
+            library.keys[index].name=name
+            library.selectedID=library.keys[index].id
+        } else {
+            let saved=SavedMapsKey(name:name,value:value)
+            library.keys.append(saved);library.selectedID=saved.id
+        }
+        try persistMapsKeys(library)
+    }
+    func selectMapsKey(_ id: String) throws {
+        guard mapsKeys.keys.contains(where: { $0.id == id }) else { return }
+        var library=mapsKeys;library.selectedID=id
+        try persistMapsKeys(library)
+    }
+    func renameMapsKey(_ id: String, name: String) throws {
+        let name=name.trimmingCharacters(in:.whitespacesAndNewlines)
+        guard !name.isEmpty,let index=mapsKeys.keys.firstIndex(where: { $0.id == id }) else { return }
+        var library=mapsKeys;library.keys[index].name=name
+        try persistMapsKeys(library)
+    }
+    func removeMapsKey(_ id: String) throws {
+        var library=mapsKeys
+        library.keys.removeAll { $0.id == id }
+        if library.selectedID == id { library.selectedID=library.keys.first?.id }
+        try persistMapsKeys(library)
+    }
+    private func persistMapsKeys(_ library: MapsKeyLibrary) throws {
+        guard library != mapsKeys else { return }
+        try KeyStore.save(library)
+        recordUndo()
+        mapsKeys=library;key=library.selectedValue
     }
     func setSamplesPerSecond(_ value: Int) {
         guard [0,1,5,10].contains(value),value != samplesPerSecond else { return }
@@ -502,6 +631,7 @@ enum KeyStore {
         return nil
     }
     private func restoreLastVideo() {
+        videoError=nil
         let defaults=UserDefaults.standard
         let savedTime=max(0,defaults.double(forKey:"lastVideoTime"))
         var resolvedURL: URL?
@@ -530,9 +660,15 @@ enum KeyStore {
                 seek(min(savedTime,duration))
                 restoringVideo=false
             } catch {
+                guard videoURL==url else { return }
                 restoringVideo=false
                 isLoadingRecordingStart=false
-                self.error="Could not restore the last video: \(error.localizedDescription)"
+                // A stale or unreadable remembered file should quietly return to
+                // the empty player instead of interrupting the user at launch.
+                player.pause(); player.replaceCurrentItem(with:nil)
+                videoURL=nil; time=0; duration=1; previewTime=nil; lockedPreviewTime=nil
+                videoError=nil
+                for key in ["lastVideoBookmark", "lastVideoPath", "lastVideoTime"] { defaults.removeObject(forKey:key) }
             }
         }
     }
